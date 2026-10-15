@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "id": "gruut.megamenu",
+  "name": "Omarchy Megamenu",
+  "version": "1.0.0",
+  "author": "Morganczech",
+  "license": "MIT",
+  "homepage": "https://github.com/Morganczech/omarchy-megamenu",
+  "description": "Theme-aware megamenu with spaces, quick access orbit, colored categories, bookmarks & local apps, browser chooser, and bookmark importer.",
+  "kinds": [
+    "menu",
+    "bar-widget"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "menu": "Megamenu.qml",
+    "barWidget": "LauncherButton.qml"
+  },
+  "barWidget": {
+    "displayName": "Megamenu",
+    "description": "Opens the Omarchy Megamenu",
+    "category": "Launcher",
+    "allowMultiple": false,
+    "defaultSection": "left",
+    "defaults": {
+      "icon": "󰀻",
+      "language": "auto"
+    },
+    "schema": [
+      {
+        "key": "icon",
+        "type": "string",
+        "label": "Bar icon glyph"
+      },
+      {
+        "key": "language",
+        "type": "string",
+        "label": "Language (auto / en / cs)"
+      }
+    ]
+  }
+}
