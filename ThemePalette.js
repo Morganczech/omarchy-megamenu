@@ -55,8 +55,8 @@ function parseColorsToml(raw) {
 
 function resolveRoleColor(palette, role, fallbackAccent) {
   var p = palette || defaultPalette()
-  var r = String(role || "blue").toLowerCase()
-  if (p[r]) return p[r]
+  var r = String(role || "").trim().toLowerCase()
+  if (r && p[r]) return p[r]
   return fallbackAccent || p.accent || p.blue
 }
 

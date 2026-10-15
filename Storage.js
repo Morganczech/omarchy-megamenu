@@ -39,21 +39,25 @@ function defaultData() {
     spaces: [
       { id: "personal", name: "Personal Space", icon: "󰋜" },
       { id: "dev-matrix", name: "Dev Matrix", icon: "󰆍" },
-      { id: "work-core", name: "Work Core", icon: "󰒍" }
+      { id: "work-core", name: "Work Core", icon: "󰒍" },
+      { id: "live-pulse", name: "Live Pulse", icon: "󰑫" }
     ],
     categories: [
       // Dev Matrix categories
-      { id: "cat-dev", spaceId: "dev-matrix", name: "Dev & Engineering", icon: "󰆍", colorRole: "green" },
-      { id: "cat-cloud", spaceId: "dev-matrix", name: "Cloud & Infra", icon: "󰅟", colorRole: "blue" },
-      { id: "cat-design", spaceId: "dev-matrix", name: "Product & Design", icon: "󰏘", colorRole: "magenta" },
-      { id: "cat-ops", spaceId: "dev-matrix", name: "Workspace & Ops", icon: "󰒍", colorRole: "cyan" },
+      { id: "cat-dev", spaceId: "dev-matrix", name: "Dev & Engineering", icon: "󰆍", colorRole: "green", type: "static", feedUrl: "", feedMode: "all" },
+      { id: "cat-cloud", spaceId: "dev-matrix", name: "Cloud & Infra", icon: "󰅟", colorRole: "blue", type: "static", feedUrl: "", feedMode: "all" },
+      { id: "cat-design", spaceId: "dev-matrix", name: "Product & Design", icon: "󰏘", colorRole: "magenta", type: "static", feedUrl: "", feedMode: "all" },
+      { id: "cat-ops", spaceId: "dev-matrix", name: "Workspace & Ops", icon: "󰒍", colorRole: "cyan", type: "static", feedUrl: "", feedMode: "all" },
       // Personal Space categories
-      { id: "cat-media", spaceId: "personal", name: "Media & Stream", icon: "󰕧", colorRole: "red" },
-      { id: "cat-social", spaceId: "personal", name: "Community & News", icon: "󰭹", colorRole: "yellow" },
-      { id: "cat-local", spaceId: "personal", name: "Local Tools", icon: "󰀻", colorRole: "cyan" },
+      { id: "cat-media", spaceId: "personal", name: "Media & Stream", icon: "󰕧", colorRole: "red", type: "static", feedUrl: "", feedMode: "all" },
+      { id: "cat-social", spaceId: "personal", name: "Community & News", icon: "󰭹", colorRole: "yellow", type: "static", feedUrl: "", feedMode: "all" },
+      { id: "cat-local", spaceId: "personal", name: "Local Tools", icon: "󰀻", colorRole: "cyan", type: "static", feedUrl: "", feedMode: "all" },
       // Work Core categories
-      { id: "cat-work-docs", spaceId: "work-core", name: "Docs & Specs", icon: "󰈙", colorRole: "blue" },
-      { id: "cat-work-comm", spaceId: "work-core", name: "Communication", icon: "󰇮", colorRole: "green" }
+      { id: "cat-work-docs", spaceId: "work-core", name: "Docs & Specs", icon: "󰈙", colorRole: "blue", type: "static", feedUrl: "", feedMode: "all" },
+      { id: "cat-work-comm", spaceId: "work-core", name: "Communication", icon: "󰇮", colorRole: "green", type: "static", feedUrl: "", feedMode: "all" },
+      // Live Pulse categories (RSS + GitHub Feeds) - 2 wide columns by default for full title readability
+      { id: "cat-live-omarchy", spaceId: "live-pulse", name: "Omarchy PRs & Issues", icon: "󰊤", colorRole: "green", type: "github", feedUrl: "basecamp/omarchy", feedMode: "all" },
+      { id: "cat-live-hn", spaceId: "live-pulse", name: "Hacker News", icon: "󰑫", colorRole: "orange", type: "rss", feedUrl: "https://hnrss.org/frontpage?count=12", feedMode: "all" }
     ],
     items: [
       // Dev Matrix - Quick Orbit [1-6] + Categories
@@ -400,7 +404,7 @@ function sanitizeItem(raw, fallbackSpaceId, fallbackCategoryId) {
     favorite: raw.favorite === true,
     pinnedSlot: Math.round(pinned),
     badgeText: String(raw.badgeText || ""),
-    colorRole: String(raw.colorRole || "blue")
+    colorRole: String(raw.colorRole !== undefined && raw.colorRole !== null ? raw.colorRole : "")
   }
 }
 
@@ -442,12 +446,19 @@ function parse(rawText) {
     if (!c || !c.id || !c.name) continue
     var cid = String(c.id)
     var cSpace = spaceIds[c.spaceId] ? String(c.spaceId) : spaces[0].id
+    var rawType = String(c.type || "static").toLowerCase()
+    var catType = (rawType === "rss" || rawType === "github") ? rawType : "static"
+    var rawMode = String(c.feedMode || "all").toLowerCase()
+    var feedMode = (rawMode === "issues" || rawMode === "prs" || rawMode === "releases") ? rawMode : "all"
     categories.push({
       id: cid,
       spaceId: cSpace,
       name: String(c.name),
       icon: String(c.icon || "󰉋"),
-      colorRole: String(c.colorRole || "blue")
+      colorRole: String(c.colorRole || "blue"),
+      type: catType,
+      feedUrl: String(c.feedUrl || "").trim(),
+      feedMode: feedMode
     })
     catIds[cid] = cSpace
   }
@@ -523,9 +534,24 @@ function matchesItemQuery(item, query) {
   return false
 }
 
-function filterItems(data, spaceId, filterId, query) {
+function filterItems(data, spaceId, filterId, query, liveFeedsMap) {
   var q = String(query || "").trim()
-  var source = q.length > 0 ? ((data && data.items) || []) : itemsForSpace(data, spaceId)
+  var baseSource = q.length > 0 ? ((data && data.items) || []) : itemsForSpace(data, spaceId)
+  var source = baseSource.slice()
+
+  if (liveFeedsMap && typeof liveFeedsMap === "object" && data && Array.isArray(data.categories)) {
+    for (var c = 0; c < data.categories.length; c++) {
+      var cat = data.categories[c]
+      if (!cat || (cat.type !== "rss" && cat.type !== "github")) continue
+      if (!q && cat.spaceId !== spaceId) continue
+      var feedObj = liveFeedsMap[cat.id]
+      var feedItems = (feedObj && Array.isArray(feedObj.items)) ? feedObj.items : []
+      for (var f = 0; f < feedItems.length; f++) {
+        source.push(feedItems[f])
+      }
+    }
+  }
+
   var out = []
   for (var i = 0; i < source.length; i++) {
     var item = source[i]
@@ -618,6 +644,143 @@ function searchDesktopEntries(rawEntries, query, hiddenIdsMap, maxResults) {
   return matches.slice(0, limit)
 }
 
+function stripJsonc(raw) {
+  return String(raw || "")
+    .replace(/^\s*\/\/[^\n]*(\n|$)/gm, "")
+    .replace(/,(\s*[}\]])/g, "$1")
+}
+
+function parseOmarchyMenuJsonc(raw) {
+  var stripped = stripJsonc(raw)
+  if (!stripped.trim()) return []
+  var parsed
+  try {
+    parsed = JSON.parse(stripped)
+  } catch (e) {
+    return []
+  }
+  if (!parsed || typeof parsed !== "object") return []
+  var source = (parsed.items && typeof parsed.items === "object" && !Array.isArray(parsed.items))
+    ? parsed.items
+    : parsed
+
+  var map = {}
+  var ids = []
+  for (var id in source) {
+    var entry = source[id]
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue
+    var parent = entry.parent
+    if (parent === undefined) {
+      parent = id.indexOf(".") >= 0 ? id.split(".").slice(0, -1).join(".") : "root"
+    }
+    if (id === "root") parent = ""
+    var aliases = Array.isArray(entry.aliases)
+      ? entry.aliases.filter(function(v) { return Boolean(v) })
+      : (typeof entry.aliases === "string" && entry.aliases ? [entry.aliases] : [])
+    var kind = entry.action ? "action" : (entry.target ? "link" : "menu")
+    map[id] = {
+      id: id,
+      parent: parent,
+      kind: kind,
+      icon: String(entry.icon || "󱓞"),
+      iconFont: String(entry.iconFont || ""),
+      label: String(entry.label || id),
+      action: String(entry.action || ""),
+      provider: String(entry.provider || ""),
+      aliases: aliases
+    }
+    ids.push(id)
+  }
+
+  var out = []
+  for (var i = 0; i < ids.length; i++) {
+    var cur = map[ids[i]]
+    if (!cur || cur.id === "root" || cur.id === "apps") continue
+    // Build breadcrumb path
+    var labels = []
+    var node = cur
+    var guard = 0
+    while (node && node.id !== "root" && guard < 16) {
+      labels.unshift(node.label)
+      node = node.parent ? map[node.parent] : null
+      guard++
+    }
+    var pathStr = labels.join(" › ")
+    var leafTokens = cur.id.replace(/[._-]+/g, " ")
+    var aliasTokens = cur.aliases.join(" ").replace(/[._-]+/g, " ")
+    out.push({
+      id: cur.id,
+      kind: cur.kind,
+      icon: cur.icon || "󱓞",
+      iconFont: cur.iconFont,
+      label: cur.label,
+      path: pathStr,
+      action: cur.action,
+      searchText: (cur.label + " " + pathStr + " " + leafTokens + " " + aliasTokens).toLowerCase()
+    })
+  }
+  return out
+}
+
+function searchOmarchyMenuEntries(menuEntries, query, maxResults) {
+  var list = Array.isArray(menuEntries) ? menuEntries : []
+  var q = String(query || "").trim().toLowerCase()
+  var limit = (maxResults && maxResults > 0) ? maxResults : 12
+  if (!q) return []
+
+  var terms = q.split(/\s+/)
+  var matches = []
+  for (var i = 0; i < list.length; i++) {
+    var entry = list[i]
+    if (!entry) continue
+    var hay = entry.searchText || ""
+    var ok = true
+    for (var t = 0; t < terms.length; t++) {
+      if (terms[t] && hay.indexOf(terms[t]) === -1) {
+        ok = false
+        break
+      }
+    }
+    if (!ok) continue
+
+    var labelLower = String(entry.label || "").toLowerCase()
+    var score = 5000
+    if (labelLower === q) score = 15000
+    else if (labelLower.indexOf(q) === 0) score = 12000 - labelLower.length
+    else if (labelLower.indexOf(q) > 0) score = 9500 - labelLower.indexOf(q) * 10
+    else if (String(entry.path || "").toLowerCase().indexOf(q) >= 0) score = 8000
+    if (entry.kind === "action") score += 250
+    if (entry.id.indexOf("style.") === 0 || entry.id.indexOf("trigger.") === 0 || entry.id.indexOf("system.") === 0 || entry.id.indexOf("setup.") === 0) {
+      score += 800
+    } else if (entry.id.indexOf("install.") === 0 || entry.id.indexOf("remove.") === 0) {
+      score -= 600
+    }
+
+    matches.push({
+      id: "omarchy:" + entry.id,
+      menuId: entry.id,
+      entryKind: "omarchy",
+      omarchyKind: entry.kind,
+      name: entry.label,
+      subtext: "Omarchy  •  " + (entry.path || entry.id),
+      icon: entry.icon || "󱓞",
+      iconFont: entry.iconFont || "",
+      action: entry.action || "",
+      score: score,
+      sortKey: (entry.path || entry.label).toLowerCase()
+    })
+  }
+
+  matches.sort(function(a, b) {
+    if (a.score !== b.score) return b.score - a.score
+    if (a.sortKey < b.sortKey) return -1
+    if (a.sortKey > b.sortKey) return 1
+    return 0
+  })
+
+  return matches.slice(0, limit)
+}
+
 // CRUD Operations returning a new state object
 
 function upsertItem(data, itemPayload) {
@@ -680,6 +843,11 @@ function upsertCategory(data, catPayload) {
   var spaceId = String((catPayload && catPayload.spaceId) || next.activeSpaceId)
   var icon = String((catPayload && catPayload.icon) || "󰉋")
   var colorRole = String((catPayload && catPayload.colorRole) || "blue")
+  var rawType = String((catPayload && catPayload.type) || "static").toLowerCase()
+  var catType = (rawType === "rss" || rawType === "github") ? rawType : "static"
+  var feedUrl = String((catPayload && catPayload.feedUrl) || "").trim()
+  var rawMode = String((catPayload && catPayload.feedMode) || "all").toLowerCase()
+  var feedMode = (rawMode === "issues" || rawMode === "prs" || rawMode === "releases") ? rawMode : "all"
 
   var found = false
   for (var i = 0; i < next.categories.length; i++) {
@@ -688,6 +856,9 @@ function upsertCategory(data, catPayload) {
       next.categories[i].spaceId = spaceId
       next.categories[i].icon = icon
       next.categories[i].colorRole = colorRole
+      next.categories[i].type = catType
+      next.categories[i].feedUrl = feedUrl
+      next.categories[i].feedMode = feedMode
       found = true
       break
     }
@@ -698,7 +869,10 @@ function upsertCategory(data, catPayload) {
       spaceId: spaceId,
       name: name,
       icon: icon,
-      colorRole: colorRole
+      colorRole: colorRole,
+      type: catType,
+      feedUrl: feedUrl,
+      feedMode: feedMode
     })
   }
   return next
@@ -817,7 +991,7 @@ function mergeImportedFolders(data, targetSpaceId, folders) {
         url: normUrl,
         iconType: "favicon",
         iconValue: "",
-        colorRole: role
+        colorRole: ""
       }, spaceId, catId)
       if (item) next.items.push(item)
     }
@@ -843,6 +1017,8 @@ if (typeof module !== "undefined") {
     filterItems: filterItems,
     normalizeDesktopId: normalizeDesktopId,
     searchDesktopEntries: searchDesktopEntries,
+    parseOmarchyMenuJsonc: parseOmarchyMenuJsonc,
+    searchOmarchyMenuEntries: searchOmarchyMenuEntries,
     upsertItem: upsertItem,
     deleteItem: deleteItem,
     toggleFavorite: toggleFavorite,

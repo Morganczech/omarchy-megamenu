@@ -1,22 +1,25 @@
 # Omarchy Megamenu (`gruut.megamenu`)
 
-A theme-aware Spotlight-style megamenu and bar widget for [Omarchy](https://omarchy.org/) featuring workspaces (**Spaces**), a 6-slot **Quick Access Orbit**, color-coded categories, web bookmarks with automatic favicons, local desktop application search (`>`), per-link browser selection, and one-click browser bookmark importing.
+A theme-aware Spotlight-style megamenu and bar widget for [Omarchy](https://omarchy.org/) featuring workspaces (**Spaces**), a 6-slot **Quick Access Orbit**, color-coded categories, live **RSS/Atom & GitHub columns**, web bookmarks with automatic favicons, built-in **Omarchy system actions & desktop app search**, per-link browser selection, and one-click browser bookmark importing.
 
 ![Omarchy Megamenu preview](preview.png)
 
 ## Features
 
-- **Spaces (Workspaces for Links & Apps):**
-  - Organize your links and apps into separate spaces (e.g. *Dev Matrix*, *Homelab & Infra*, *Personal*) and switch between them with `Tab` / `Shift+Tab` or a click.
+- **Spaces (Workspaces for Links, Feeds & Apps):**
+  - Organize your links, feeds, and apps into separate spaces (e.g. *Dev Matrix*, *Homelab & Infra*, *Live Pulse*, *Personal*) and switch between them with `Tab` / `Shift+Tab` or a click.
   - Create, rename, or delete spaces directly from the top bar.
 - **Quick Access / Primary Orbit (`1–6`):**
-  - Pin up to 6 of your most used web apps or local applications per space and launch them instantly with keys `1` through `6`.
+  - Pin up to 6 of your most used web apps, Omarchy actions, or local applications per space and launch them instantly with keys `1` through `6`.
+- **Live Columns (RSS/Atom & GitHub Issues/PRs/Releases):**
+  - Any category column can be configured as a **Static Bookmark list**, **RSS / Atom Feed**, or **GitHub Repository feed** (`owner/repo` or `@me` via `gh` CLI).
+  - Includes a built-in **Live Pulse** showcase space (Hacker News, Omarchy GitHub activity, Tech News) and one-click `󰐃` pinning to save any live entry as a permanent bookmark.
 - **Color-Coded Categories & Theme Integration:**
-  - Automatically adapts to the active Omarchy theme (`Color`, `Style`, `Border`, and semantic ANSI colors from `colors.toml`: `blue`, `cyan`, `green`, `magenta`, `yellow`, `red`).
+  - Automatically adapts to the active Omarchy light/dark theme (`Color`, `Style`, `Border`, and semantic ANSI colors from `colors.toml`: `blue`, `cyan`, `green`, `magenta`, `yellow`, `orange`, `red`).
   - Responsive category filter badges under the search bar that center on a single row and wrap cleanly when you have many categories.
-- **Instant Search & Local Application Launcher (`>`):**
-  - Type anywhere to filter bookmarks and pinned apps across the active space.
-  - Prefix your query with **`>`** (e.g. `> firefox`, `> ghostty`) to search and launch installed system `.desktop` applications or pin them into any Megamenu category.
+- **Instant Search, Omarchy Spotlight Actions & Local App Launcher (`>`):**
+  - Type anywhere to filter bookmarks across spaces **and** simultaneously search native Omarchy system actions (`Style › Theme`, `Style › Background`, `System › Lock`, `Trigger › Capture › Screenshot`, `Setup › Monitors`, etc.) and installed `.desktop` applications.
+  - Prefix your query with **`>`** (e.g. `> theme`, `> ghostty`) to open the dedicated full-width Omarchy actions & applications view, or pin any action/app into a Megamenu category.
 - **Right-Click Browser Chooser & Actions:**
   - Right-click any item (or press `Alt+M`) to open a context menu where you can launch a URL in **any installed browser** (Brave, Zen, Firefox, Chromium, Vivaldi, LibreWolf, etc.), copy the URL/Desktop ID to the clipboard (`wl-copy`), edit, or delete the item.
 - **Browser Bookmark Importer:**

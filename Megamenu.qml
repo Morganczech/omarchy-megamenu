@@ -38,6 +38,7 @@ Item {
   property var hiddenDesktopIds: ({})
   property var appIconIndex: ({})
   property var pendingAppIconIndex: ({})
+  property var omarchyMenuEntries: []
   property string payloadLanguageOverride: ""
 
   // Localization state
@@ -66,13 +67,17 @@ Item {
   property string activeFilter: "all" // "all", "favorites", or categoryId
   property string selectedItemId: ""
   property int selectedAppIndex: 0
+  property bool keyboardGridNavActive: false
   property string statusBannerText: ""
 
-  // Context Menu state
+  // Context Menu & Spaces Dropdown state
   property bool contextMenuOpen: false
   property var contextMenuItem: null
   property real contextMenuX: 0
   property real contextMenuY: 0
+  property bool spacesDropdownOpen: false
+  property real spacesDropdownX: 0
+  property real spacesDropdownY: 0
 
   // Modals: "" | "editItem" | "editCategory" | "editSpace" | "importBookmarks"
   property string activeModal: ""
@@ -88,7 +93,7 @@ Item {
   property string formItemIconType: "favicon" // "favicon" | "glyph" | "system" | "monogram"
   property string formItemIconValue: ""
   property string formItemBadgeText: ""
-  property string formItemColorRole: "blue"
+  property string formItemColorRole: ""
   property int formItemPinnedSlot: 0
   property bool formItemFavorite: false
   property string formAppSearchQuery: ""
@@ -98,6 +103,13 @@ Item {
   property string formCategoryName: ""
   property string formCategoryIcon: "󰉋"
   property string formCategoryColorRole: "blue"
+  property string formCategoryType: "static" // "static" | "rss" | "github"
+  property string formCategoryFeedUrl: ""
+  property string formCategoryFeedMode: "all" // "all" | "issues" | "prs" | "releases"
+
+  // Live Feeds state
+  property var liveFeedsMap: ({})
+  property bool fetchingLiveFeeds: false
 
   // Edit Space Modal fields
   property string formSpaceId: ""
@@ -129,15 +141,71 @@ Item {
   readonly property var currentCategories: Storage.categoriesForSpace(root.data, root.activeSpaceId)
   readonly property var currentSpaceItems: Storage.itemsForSpace(root.data, root.activeSpaceId)
   readonly property var pinnedOrbit: Storage.pinnedOrbitForSpace(root.data, root.activeSpaceId)
-  readonly property var filteredFlatItems: Storage.filterItems(root.data, root.activeSpaceId, root.activeFilter, root.searchQuery)
+  readonly property var filteredFlatItems: Storage.filterItems(root.data, root.activeSpaceId, root.activeFilter, root.searchQuery, root.liveFeedsMap)
   readonly property bool isCommandMode: root.searchQuery.trim().indexOf(">") === 0
   readonly property var matchedSystemApps: {
     if (!root.isCommandMode) return []
     var q = root.searchQuery.trim().slice(1).trim()
+    var omarchyMatches = Storage.searchOmarchyMenuEntries(root.omarchyMenuEntries, q, 25)
     var values = (DesktopEntries && DesktopEntries.applications && DesktopEntries.applications.values)
       ? DesktopEntries.applications.values
       : []
-    return Storage.searchDesktopEntries(values, q, root.hiddenDesktopIds, 40)
+    var appMatches = Storage.searchDesktopEntries(values, q, root.hiddenDesktopIds, 40)
+    return omarchyMatches.concat(appMatches)
+  }
+  readonly property var searchSystemColumnItems: {
+    if (root.isCommandMode) return []
+    var q = root.searchQuery.trim()
+    if (!q) return []
+    var omarchyMatches = Storage.searchOmarchyMenuEntries(root.omarchyMenuEntries, q, 10)
+    var values = (DesktopEntries && DesktopEntries.applications && DesktopEntries.applications.values)
+      ? DesktopEntries.applications.values
+      : []
+    var appMatches = Storage.searchDesktopEntries(values, q, root.hiddenDesktopIds, 8)
+    var items = []
+    for (var i = 0; i < omarchyMatches.length; i++) {
+      var om = omarchyMatches[i]
+      items.push({
+        id: "sys_omarchy_" + om.menuId,
+        spaceId: root.activeSpaceId,
+        categoryId: "__omarchy_system__",
+        type: "app",
+        title: om.name,
+        subtitle: om.subtext,
+        url: "",
+        desktopId: om.id,
+        omarchyAction: om.action || "",
+        omarchyMenuId: om.menuId || "",
+        iconType: "glyph",
+        iconValue: om.icon || "󱓞",
+        badgeText: om.omarchyKind === "menu" ? "MENU" : "OMARCHY",
+        colorRole: "cyan",
+        favorite: false,
+        pinnedSlot: 0,
+        isSystemResult: true
+      })
+    }
+    for (var j = 0; j < appMatches.length; j++) {
+      var ap = appMatches[j]
+      items.push({
+        id: "sys_app_" + ap.id,
+        spaceId: root.activeSpaceId,
+        categoryId: "__omarchy_system__",
+        type: "app",
+        title: ap.name,
+        subtitle: ap.subtext || ap.id,
+        url: "",
+        desktopId: ap.id,
+        iconType: "system",
+        iconValue: ap.icon || "",
+        badgeText: "APP",
+        colorRole: "green",
+        favorite: false,
+        pinnedSlot: 0,
+        isSystemResult: true
+      })
+    }
+    return items
   }
 
   function resolveAppIconSource(icon) {
@@ -154,7 +222,28 @@ Item {
   }
 
   function launchDesktopApp(desktopId, appName) {
-    var id = Storage.normalizeDesktopId(desktopId)
+    var raw = String(desktopId || "").trim()
+    if (!raw) return
+    if (raw.indexOf("omarchy:") === 0) {
+      var menuId = raw.slice(8).trim()
+      var entries = root.omarchyMenuEntries || []
+      for (var i = 0; i < entries.length; i++) {
+        if (entries[i].id === menuId) {
+          if (entries[i].action) {
+            Util.execDetached(entries[i].action)
+            return
+          }
+          break
+        }
+      }
+      if (root.shell && typeof root.shell.summon === "function") {
+        root.shell.summon("omarchy.menu", JSON.stringify({ initialMenu: menuId }))
+      } else {
+        Util.execDetached("omarchy-shell shell summon omarchy.menu " + Util.shellQuote(JSON.stringify({ initialMenu: menuId })))
+      }
+      return
+    }
+    var id = Storage.normalizeDesktopId(raw)
     if (!id) return
     Util.execDetached("uwsm-app -- gtk-launch " + Util.shellQuote(id + ".desktop"))
   }
@@ -170,6 +259,7 @@ Item {
 
     root.opened = true
     root.contextMenuOpen = false
+    root.spacesDropdownOpen = false
     root.activeModal = ""
     root.searchQuery = ""
     root.selectedAppIndex = 0
@@ -178,6 +268,7 @@ Item {
     if (!appIconScanProc.running) appIconScanProc.running = true
     root.refreshBrowsers()
     root.applyGlobalShortcut("", "status")
+    root.refreshLiveFeeds(false, "")
     root.ensureSelectedValid()
     Qt.callLater(function() {
       if (searchInput) searchInput.forceActiveFocus()
@@ -186,6 +277,7 @@ Item {
 
   function close() {
     root.contextMenuOpen = false
+    root.spacesDropdownOpen = false
     root.activeModal = ""
     root.opened = false
   }
@@ -215,6 +307,25 @@ Item {
     return ThemePalette.resolveRoleColor(root.palette, role, Color.accent)
   }
 
+  function itemAccentColor(item, fallbackRole) {
+    var explicitRole = item && item.colorRole ? String(item.colorRole).trim() : ""
+    if (explicitRole.length > 0) {
+      return root.roleColor(explicitRole)
+    }
+    if (item && item.categoryId && root.data && Array.isArray(root.data.categories)) {
+      for (var i = 0; i < root.data.categories.length; i++) {
+        var cat = root.data.categories[i]
+        if (cat && cat.id === item.categoryId && cat.colorRole) {
+          return root.roleColor(cat.colorRole)
+        }
+      }
+    }
+    if (fallbackRole) {
+      return root.roleColor(fallbackRole)
+    }
+    return Color.accent
+  }
+
   function faviconUrlFor(url) {
     var domain = Storage.extractDomain(url)
     if (!domain || !root.cachedFaviconDomains[domain]) return ""
@@ -232,39 +343,142 @@ Item {
 
   function hydrateData(rawText) {
     var hasExisting = rawText && String(rawText).trim().length > 0
-    root.data = Storage.parse(rawText)
+    var parsed = Storage.parse(rawText)
+
+    // Ensure the default "live-pulse" showcase space exists so users upgrading get Live Feeds out of the box
+    var hasLivePulse = false
+    for (var s = 0; s < parsed.spaces.length; s++) {
+      if (parsed.spaces[s].id === "live-pulse") {
+        hasLivePulse = true
+        break
+      }
+    }
+    if (hasExisting && !hasLivePulse) {
+      var def = Storage.defaultData()
+      for (var ds = 0; ds < def.spaces.length; ds++) {
+        if (def.spaces[ds].id === "live-pulse") parsed.spaces.push(def.spaces[ds])
+      }
+      for (var dc = 0; dc < def.categories.length; dc++) {
+        if (def.categories[dc].spaceId === "live-pulse") parsed.categories.push(def.categories[dc])
+      }
+      dataFile.setText(Storage.serialize(parsed))
+    }
+
+    root.data = parsed
     root.storageReady = true
     if (!hasExisting) {
       dataFile.setText(Storage.serialize(root.data))
     }
     root.ensureSelectedValid()
     root.queueMissingFavicons()
+    root.refreshLiveFeeds(false, "")
+  }
+
+  function buildVisibleCategoryColumns() {
+    var cats = root.currentCategories || []
+    var all = root.filteredFlatItems || []
+    var cols = []
+    for (var c = 0; c < cats.length; c++) {
+      var cat = cats[c]
+      if (root.activeFilter !== "all" && root.activeFilter !== "favorites" && cat.id !== root.activeFilter) {
+        continue
+      }
+      var colItems = []
+      for (var i = 0; i < all.length; i++) {
+        if (all[i].categoryId === cat.id) colItems.push(all[i])
+      }
+      if (colItems.length > 0) {
+        cols.push({ category: cat, items: colItems })
+      }
+    }
+    var sysItems = root.searchSystemColumnItems || []
+    if (sysItems.length > 0) {
+      cols.push({
+        category: {
+          id: "__omarchy_system__",
+          name: root.tr("omarchyColumnName"),
+          icon: "󱓞",
+          colorRole: "cyan",
+          type: "omarchy"
+        },
+        items: sysItems
+      })
+    }
+    return cols
   }
 
   function ensureSelectedValid() {
-    var items = root.filteredFlatItems
-    if (!items || items.length === 0) {
+    var cols = root.buildVisibleCategoryColumns()
+    if (!cols || cols.length === 0) {
       root.selectedItemId = ""
       return
     }
-    for (var i = 0; i < items.length; i++) {
-      if (items[i].id === root.selectedItemId) return
+    for (var c = 0; c < cols.length; c++) {
+      var colItems = cols[c].items
+      for (var r = 0; r < colItems.length; r++) {
+        if (colItems[r].id === root.selectedItemId) return
+      }
     }
-    root.selectedItemId = items[0].id
+    root.selectedItemId = cols[0].items[0].id
   }
 
   function selectDelta(delta) {
-    var items = root.filteredFlatItems
-    if (!items || items.length === 0) return
-    var idx = 0
-    for (var i = 0; i < items.length; i++) {
-      if (items[i].id === root.selectedItemId) {
-        idx = i
-        break
+    var cols = root.buildVisibleCategoryColumns()
+    if (!cols || cols.length === 0) return
+    var foundCol = 0
+    var foundRow = 0
+    for (var c = 0; c < cols.length; c++) {
+      var colItems = cols[c].items
+      for (var r = 0; r < colItems.length; r++) {
+        if (colItems[r].id === root.selectedItemId) {
+          foundCol = c
+          foundRow = r
+          break
+        }
       }
     }
-    var nextIdx = (idx + delta + items.length) % items.length
-    root.selectedItemId = items[nextIdx].id
+    var targetList = cols[foundCol].items
+    var nextRow = (foundRow + delta + targetList.length) % targetList.length
+    root.selectedItemId = targetList[nextRow].id
+  }
+
+  function selectCategoryColumnDelta(colDelta) {
+    var cats = root.currentCategories || []
+    if (cats.length === 0) return
+
+    // If a single category filter pill is active, Left/Right switches the active category filter
+    if (root.activeFilter !== "all" && root.activeFilter !== "favorites") {
+      var curCatIdx = 0
+      for (var k = 0; k < cats.length; k++) {
+        if (cats[k].id === root.activeFilter) {
+          curCatIdx = k
+          break
+        }
+      }
+      var nextCatIdx = (curCatIdx + colDelta + cats.length) % cats.length
+      root.activeFilter = cats[nextCatIdx].id
+      root.ensureSelectedValid()
+      return
+    }
+
+    var cols = root.buildVisibleCategoryColumns()
+    if (!cols || cols.length === 0) return
+    var foundCol = 0
+    var foundRow = 0
+    for (var c = 0; c < cols.length; c++) {
+      var colItems = cols[c].items
+      for (var r = 0; r < colItems.length; r++) {
+        if (colItems[r].id === root.selectedItemId) {
+          foundCol = c
+          foundRow = r
+          break
+        }
+      }
+    }
+    var nextCol = (foundCol + colDelta + cols.length) % cols.length
+    var nextColItems = cols[nextCol].items
+    var clampedRow = Math.min(foundRow, nextColItems.length - 1)
+    root.selectedItemId = nextColItems[clampedRow].id
   }
 
   function findItemById(itemId) {
@@ -272,7 +486,64 @@ Item {
     for (var i = 0; i < list.length; i++) {
       if (list[i].id === itemId) return list[i]
     }
+    var flat = root.filteredFlatItems || []
+    for (var j = 0; j < flat.length; j++) {
+      if (flat[j].id === itemId) return flat[j]
+    }
+    var sys = root.searchSystemColumnItems || []
+    for (var k = 0; k < sys.length; k++) {
+      if (sys[k].id === itemId) return sys[k]
+    }
     return null
+  }
+
+  function pinLiveItemAsBookmark(liveItem) {
+    if (!liveItem) return
+    root.contextMenuOpen = false
+    var cats = root.currentCategories
+    var targetCatId = ""
+    for (var i = 0; i < cats.length; i++) {
+      if (!cats[i].type || cats[i].type === "static") {
+        targetCatId = cats[i].id
+        break
+      }
+    }
+    if (!targetCatId && cats.length > 0) targetCatId = cats[0].id
+    var isApp = (liveItem.type === "app")
+    var next = Storage.upsertItem(root.data, {
+      id: Storage.uid("item"),
+      spaceId: root.activeSpaceId,
+      categoryId: targetCatId,
+      type: isApp ? "app" : "url",
+      title: liveItem.title || "Saved Link",
+      subtitle: liveItem.subtitle || "",
+      url: isApp ? "" : (liveItem.url || ""),
+      desktopId: isApp ? (liveItem.desktopId || "") : "",
+      iconType: isApp ? (liveItem.iconType || "system") : "favicon",
+      iconValue: liveItem.iconValue || (isApp ? "󱓞" : "󰑫"),
+      badgeText: liveItem.badgeText || "",
+      colorRole: liveItem.colorRole || (isApp ? "cyan" : "blue"),
+      pinnedSlot: 0,
+      favorite: true
+    })
+    root.commitData(next)
+    root.showStatus(root.tr("statusLivePinned") + (liveItem.title || ""))
+  }
+
+  function refreshLiveFeeds(forceRefresh, singleCategoryId) {
+    if (!root.dirReady || liveFeedFetchProc.running) return
+    var args = [
+      "python3",
+      root.pluginDir + "/scripts/fetch-feeds.py",
+      root.dataDir + "/data.json",
+      root.dataDir + "/feeds-cache.json"
+    ]
+    if (forceRefresh) args.push("--force")
+    if (singleCategoryId) args.push("--category=" + singleCategoryId)
+    root.fetchingLiveFeeds = true
+    liveFeedFetchProc.wasExplicitRefresh = (forceRefresh === true)
+    liveFeedFetchProc.command = args
+    liveFeedFetchProc.running = true
   }
 
   function switchSpace(spaceId) {
@@ -281,6 +552,7 @@ Item {
     next.activeSpaceId = spaceId
     root.activeFilter = "all"
     root.contextMenuOpen = false
+    root.spacesDropdownOpen = false
     root.commitData(next)
   }
 
@@ -324,8 +596,17 @@ Item {
     root.showStatus(root.tr("statusCopied") + target)
   }
 
+  function closeContextMenu() {
+    root.contextMenuOpen = false
+    root.spacesDropdownOpen = false
+    Qt.callLater(function() {
+      if (root.activeModal === "" && searchInput) searchInput.forceActiveFocus()
+    })
+  }
+
   function openContextMenuFor(item, globalX, globalY) {
     if (!item) return
+    root.spacesDropdownOpen = false
     root.contextMenuItem = item
     var menuW = Style.space(260)
     var menuH = Style.space(250)
@@ -334,11 +615,30 @@ Item {
     root.contextMenuX = Math.max(Style.space(12), Math.min(maxX, globalX))
     root.contextMenuY = Math.max(Style.space(12), Math.min(maxY, globalY))
     root.contextMenuOpen = true
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  function toggleSpacesDropdown(anchorItem) {
+    if (root.spacesDropdownOpen) {
+      root.closeContextMenu()
+      return
+    }
+    root.contextMenuOpen = false
+    if (anchorItem) {
+      var pos = anchorItem.mapToItem(card, 0, anchorItem.height + Style.space(6))
+      var menuW = Style.space(250)
+      var maxX = card.width - menuW - Style.space(12)
+      root.spacesDropdownX = Math.max(Style.space(12), Math.min(maxX, pos.x))
+      root.spacesDropdownY = Math.max(Style.space(44), pos.y)
+    }
+    root.spacesDropdownOpen = true
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
   // Modal openers
   function openAddItemModal(preselectedCategoryId, preselectedSlot) {
     root.contextMenuOpen = false
+    root.spacesDropdownOpen = false
     var cats = root.currentCategories
     var defaultCat = preselectedCategoryId || (cats.length > 0 ? cats[0].id : "")
     root.formItemId = ""
@@ -351,7 +651,7 @@ Item {
     root.formItemIconType = "favicon"
     root.formItemIconValue = ""
     root.formItemBadgeText = ""
-    root.formItemColorRole = "blue"
+    root.formItemColorRole = ""
     root.formItemPinnedSlot = preselectedSlot || 0
     root.formItemFavorite = false
     root.formAppSearchQuery = ""
@@ -362,17 +662,22 @@ Item {
   function openEditItemModal(item) {
     if (!item) return
     root.contextMenuOpen = false
+    root.spacesDropdownOpen = false
+    var itType = item.type || "url"
+    var customIcon = (itType === "url" && item.iconType !== "glyph") ? "" : String(item.iconValue || "").trim()
     root.formItemId = item.id
-    root.formItemType = item.type || "url"
+    root.formItemType = itType
     root.formItemTitle = item.title || ""
     root.formItemSubtitle = item.subtitle || ""
     root.formItemUrl = item.url || ""
     root.formItemDesktopId = item.desktopId || ""
     root.formItemCategoryId = item.categoryId || ""
-    root.formItemIconType = item.iconType || "favicon"
-    root.formItemIconValue = item.iconValue || ""
+    root.formItemIconValue = customIcon
+    root.formItemIconType = (itType === "url")
+      ? (customIcon.length > 0 ? "glyph" : "favicon")
+      : (item.iconType || "system")
     root.formItemBadgeText = item.badgeText || ""
-    root.formItemColorRole = item.colorRole || "blue"
+    root.formItemColorRole = item.colorRole || ""
     root.formItemPinnedSlot = item.pinnedSlot || 0
     root.formItemFavorite = item.favorite === true
     root.formAppSearchQuery = ""
@@ -386,6 +691,10 @@ Item {
       root.showStatus(root.tr("statusEnterItemTitle"))
       return
     }
+    var trimmedIcon = root.formItemIconValue.trim()
+    var resolvedIconType = (root.formItemType === "url")
+      ? (trimmedIcon.length > 0 ? "glyph" : "favicon")
+      : "system"
     var payload = {
       id: root.formItemId || Storage.uid("item"),
       spaceId: root.activeSpaceId,
@@ -395,8 +704,8 @@ Item {
       subtitle: root.formItemSubtitle.trim(),
       url: root.formItemType === "url" ? root.formItemUrl.trim() : "",
       desktopId: root.formItemType === "app" ? root.formItemDesktopId.trim() : "",
-      iconType: root.formItemIconType,
-      iconValue: root.formItemIconValue.trim(),
+      iconType: resolvedIconType,
+      iconValue: trimmedIcon,
       badgeText: root.formItemBadgeText.trim(),
       colorRole: root.formItemColorRole,
       pinnedSlot: root.formItemPinnedSlot,
@@ -410,16 +719,23 @@ Item {
 
   function openCategoryModal(categoryObj) {
     root.contextMenuOpen = false
+    root.spacesDropdownOpen = false
     if (categoryObj && categoryObj.id) {
       root.formCategoryId = categoryObj.id
       root.formCategoryName = categoryObj.name || ""
       root.formCategoryIcon = categoryObj.icon || "󰉋"
       root.formCategoryColorRole = categoryObj.colorRole || "blue"
+      root.formCategoryType = categoryObj.type || "static"
+      root.formCategoryFeedUrl = categoryObj.feedUrl || ""
+      root.formCategoryFeedMode = categoryObj.feedMode || "all"
     } else {
       root.formCategoryId = ""
       root.formCategoryName = ""
       root.formCategoryIcon = "󰉋"
       root.formCategoryColorRole = "blue"
+      root.formCategoryType = "static"
+      root.formCategoryFeedUrl = ""
+      root.formCategoryFeedMode = "all"
     }
     root.activeModal = "editCategory"
     Qt.callLater(function() { catNameInput.forceActiveFocus() })
@@ -431,20 +747,29 @@ Item {
       root.showStatus(root.tr("statusEnterCategoryName"))
       return
     }
+    var cid = root.formCategoryId || Storage.uid("cat")
+    var ctype = root.formCategoryType || "static"
     var next = Storage.upsertCategory(root.data, {
-      id: root.formCategoryId || Storage.uid("cat"),
+      id: cid,
       spaceId: root.activeSpaceId,
       name: name,
-      icon: root.formCategoryIcon.trim() || "󰉋",
-      colorRole: root.formCategoryColorRole
+      icon: root.formCategoryIcon.trim() || (ctype === "rss" ? "󰑫" : (ctype === "github" ? "󰊤" : "󰉋")),
+      colorRole: root.formCategoryColorRole,
+      type: ctype,
+      feedUrl: root.formCategoryFeedUrl.trim(),
+      feedMode: root.formCategoryFeedMode || "all"
     })
     root.activeModal = ""
     root.commitData(next)
     root.showStatus(root.tr("statusCategorySaved") + name)
+    if (ctype === "rss" || ctype === "github") {
+      Qt.callLater(function() { root.refreshLiveFeeds(true, cid) })
+    }
   }
 
   function openSpaceModal(spaceObj) {
     root.contextMenuOpen = false
+    root.spacesDropdownOpen = false
     if (spaceObj && spaceObj.id) {
       root.formSpaceId = spaceObj.id
       root.formSpaceName = spaceObj.name || ""
@@ -476,6 +801,7 @@ Item {
 
   function openImportBookmarksModal() {
     root.contextMenuOpen = false
+    root.spacesDropdownOpen = false
     root.activeModal = "importBookmarks"
     root.scanningBookmarks = true
     bookmarkScanProc.running = false
@@ -528,23 +854,42 @@ Item {
   }
 
   function queueMissingFavicons() {
-    if (!root.dirReady || faviconFetchProc.running) return
-    var items = (root.data && root.data.items) ? root.data.items : []
+    if (!root.dirReady) return
+    if (faviconFetchProc.running) {
+      faviconFetchProc.rerunAfterExit = true
+      return
+    }
+    var rawItems = (root.data && root.data.items) ? root.data.items : []
+    var ordered = []
+    for (var a = 0; a < rawItems.length; a++) {
+      if (rawItems[a].spaceId === root.activeSpaceId) ordered.push(rawItems[a])
+    }
+    for (var b = 0; b < rawItems.length; b++) {
+      if (rawItems[b].spaceId !== root.activeSpaceId) ordered.push(rawItems[b])
+    }
+    var feedKeys = Object.keys(root.liveFeedsMap || {})
+    for (var k = 0; k < feedKeys.length; k++) {
+      var fobj = root.liveFeedsMap[feedKeys[k]]
+      var fitems = (fobj && Array.isArray(fobj.items)) ? fobj.items : []
+      for (var m = 0; m < fitems.length; m++) ordered.push(fitems[m])
+    }
+
     var domains = {}
-    var cmd = [root.pluginDir + "/scripts/fetch-favicon.sh", root.faviconsDir]
-    var count = 0
-    for (var i = 0; i < items.length; i++) {
-      if (items[i].type === "url" && items[i].url) {
-        var d = Storage.extractDomain(items[i].url)
-        if (d && !domains[d]) {
+    var cmd = [root.pluginDir + "/scripts/fetch-favicon.sh", root.faviconsDir, "--list-existing"]
+    var missingCount = 0
+    for (var i = 0; i < ordered.length; i++) {
+      if (ordered[i].type === "url" && ordered[i].url) {
+        var d = Storage.extractDomain(ordered[i].url)
+        if (d && !domains[d] && !root.cachedFaviconDomains[d]) {
           domains[d] = true
           cmd.push(d)
-          count++
-          if (count >= 25) break
+          missingCount++
+          if (missingCount >= 40) break
         }
       }
     }
-    if (count > 0) {
+    if (missingCount > 0 || Object.keys(root.cachedFaviconDomains || {}).length === 0) {
+      faviconFetchProc.rerunAfterExit = false
       faviconFetchProc.command = cmd
       faviconFetchProc.running = true
     }
@@ -556,14 +901,15 @@ Item {
     var alt = (event.modifiers & Qt.AltModifier) !== 0
 
     if (event.key === Qt.Key_Escape) {
-      if (root.contextMenuOpen) {
-        root.contextMenuOpen = false
+      if (root.contextMenuOpen || root.spacesDropdownOpen) {
+        root.closeContextMenu()
       } else if (root.activeModal !== "") {
         root.activeModal = ""
         Qt.callLater(function() { searchInput.forceActiveFocus() })
       } else if (root.searchQuery.length > 0) {
         root.searchQuery = ""
         searchInput.text = ""
+        Qt.callLater(function() { searchInput.forceActiveFocus() })
       } else {
         root.dismiss()
       }
@@ -612,6 +958,7 @@ Item {
     }
 
     if (event.key === Qt.Key_Down) {
+      root.keyboardGridNavActive = true
       if (root.isCommandMode) {
         var appCountDown = root.matchedSystemApps.length
         if (appCountDown > 0) {
@@ -626,6 +973,7 @@ Item {
     }
 
     if (event.key === Qt.Key_Up) {
+      root.keyboardGridNavActive = true
       if (root.isCommandMode) {
         var appCountUp = root.matchedSystemApps.length
         if (appCountUp > 0) {
@@ -637,6 +985,15 @@ Item {
       }
       event.accepted = true
       return
+    }
+
+    if (event.key === Qt.Key_Left || event.key === Qt.Key_Right) {
+      if (!root.isCommandMode && (root.searchQuery.length === 0 || root.keyboardGridNavActive || alt || !searchInput.activeFocus)) {
+        root.keyboardGridNavActive = true
+        root.selectCategoryColumnDelta(event.key === Qt.Key_Right ? 1 : -1)
+        event.accepted = true
+        return
+      }
     }
 
     if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
@@ -702,6 +1059,7 @@ Item {
 
   Process {
     id: faviconFetchProc
+    property bool rerunAfterExit: false
     running: false
     stdout: StdioCollector {
       onStreamFinished: {
@@ -712,6 +1070,10 @@ Item {
           if (d) map[d] = true
         }
         root.cachedFaviconDomains = map
+        if (faviconFetchProc.rerunAfterExit) {
+          faviconFetchProc.rerunAfterExit = false
+          Qt.callLater(function() { root.queueMissingFavicons() })
+        }
       }
     }
   }
@@ -755,6 +1117,49 @@ Item {
   }
 
   FileView {
+    id: feedsCacheFile
+    path: root.dirReady ? root.dataDir + "/feeds-cache.json" : ""
+    watchChanges: false
+    printErrors: false
+    onLoaded: {
+      try {
+        var parsed = JSON.parse(feedsCacheFile.text() || "{}")
+        if (parsed && typeof parsed.feeds === "object") {
+          root.liveFeedsMap = parsed.feeds
+          root.ensureSelectedValid()
+          root.queueMissingFavicons()
+        }
+      } catch (e) {}
+    }
+  }
+
+  Process {
+    id: liveFeedFetchProc
+    property bool wasExplicitRefresh: false
+    running: false
+    stdout: StdioCollector {
+      id: liveFeedOut
+      waitForEnd: true
+    }
+    onExited: {
+      root.fetchingLiveFeeds = false
+      var raw = String(liveFeedOut.text || "").trim()
+      if (!raw) return
+      try {
+        var parsed = JSON.parse(raw)
+        if (parsed && typeof parsed.feeds === "object") {
+          root.liveFeedsMap = parsed.feeds
+          root.ensureSelectedValid()
+          root.queueMissingFavicons()
+          if (liveFeedFetchProc.wasExplicitRefresh) {
+            root.showStatus(root.tr("statusFeedsRefreshed"))
+          }
+        }
+      } catch (e) {}
+    }
+  }
+
+  FileView {
     id: themeColorsFile
     path: root.currentThemeColorsPath
     watchChanges: true
@@ -776,6 +1181,16 @@ Item {
         if (id) map[id] = true
       }
       root.hiddenDesktopIds = map
+    }
+  }
+
+  FileView {
+    id: omarchyMenuFile
+    path: (root.omarchyPath || "/usr/share/omarchy") + "/default/omarchy/omarchy-menu.jsonc"
+    watchChanges: false
+    printErrors: false
+    onLoaded: {
+      root.omarchyMenuEntries = Storage.parseOmarchyMenuJsonc(omarchyMenuFile.text())
     }
   }
 
@@ -857,16 +1272,20 @@ Item {
   component ItemIconBadge: Rectangle {
     id: badgeRoot
     property var itemData: null
+    property string fallbackRole: ""
+    property bool activeHighlight: false
     property int boxSize: Style.space(28)
+    readonly property bool hasColorRole: Boolean(itemData && itemData.colorRole && String(itemData.colorRole).length > 0)
+    readonly property color badgeAccent: root.itemAccentColor(itemData, fallbackRole)
     width: boxSize
     height: boxSize
     radius: Style.cornerRadius > 0 ? Math.max(4, Math.min(8, Style.cornerRadius)) : 4
-    color: Util.alpha(root.roleColor(itemData ? itemData.colorRole : "blue"), 0.14)
+    color: (hasColorRole || activeHighlight) ? Util.alpha(badgeAccent, 0.16) : Util.alpha(badgeAccent, 0.08)
     border.width: 1
-    border.color: Util.alpha(root.roleColor(itemData ? itemData.colorRole : "blue"), 0.35)
+    border.color: (hasColorRole || activeHighlight) ? Util.alpha(badgeAccent, 0.5) : Util.alpha(badgeAccent, 0.25)
 
-    readonly property bool isApp: itemData && itemData.type === "app"
-    readonly property bool wantsFavicon: itemData && itemData.type === "url" && itemData.iconType === "favicon"
+    readonly property bool isApp: itemData && itemData.type === "app" && itemData.iconType !== "glyph"
+    readonly property bool wantsFavicon: itemData && itemData.type === "url" && (itemData.iconType !== "glyph" || !itemData.iconValue)
     readonly property string faviconSource: wantsFavicon ? root.faviconUrlFor(itemData.url) : ""
     readonly property string appIconSource: (isApp && itemData.iconValue)
       ? root.resolveAppIconSource(itemData.iconValue)
@@ -896,7 +1315,7 @@ Item {
         }
         return Storage.monogramFor(badgeRoot.itemData.title, badgeRoot.itemData.url)
       }
-      color: root.roleColor(badgeRoot.itemData ? badgeRoot.itemData.colorRole : "blue")
+      color: badgeRoot.badgeAccent
       font.family: root.fontFamily
       font.pixelSize: Math.round(badgeRoot.boxSize * 0.48)
       font.bold: true
@@ -921,7 +1340,17 @@ Item {
 
     MouseArea {
       anchors.fill: parent
-      onClicked: root.dismiss()
+      acceptedButtons: Qt.LeftButton | Qt.RightButton
+      onPressed: {
+        if (root.contextMenuOpen || root.spacesDropdownOpen) {
+          root.closeContextMenu()
+        } else if (root.activeModal !== "") {
+          root.activeModal = ""
+          Qt.callLater(function() { searchInput.forceActiveFocus() })
+        } else {
+          root.dismiss()
+        }
+      }
     }
 
     BorderSurface {
@@ -939,6 +1368,7 @@ Item {
         acceptedButtons: Qt.LeftButton | Qt.RightButton
         onClicked: {
           root.contextMenuOpen = false
+          root.spacesDropdownOpen = false
         }
       }
 
@@ -967,147 +1397,235 @@ Item {
           width: parent.width
           height: Style.space(40)
 
+          // Brand / Core OS indicator
           Row {
+            id: brandRow
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
-            spacing: Style.spacing.md
+            spacing: Style.spacing.xs
 
-            // Brand / Core OS indicator
-            Row {
+            Rectangle {
+              width: Style.space(10)
+              height: Style.space(10)
+              radius: width / 2
+              color: root.roleColor("green")
               anchors.verticalCenter: parent.verticalCenter
-              spacing: Style.spacing.xs
-
-              Rectangle {
-                width: Style.space(10)
-                height: Style.space(10)
-                radius: width / 2
-                color: root.roleColor("green")
-                anchors.verticalCenter: parent.verticalCenter
-              }
-
-              Text {
-                text: "Omarchy"
-                color: root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.heading
-                font.bold: true
-                anchors.verticalCenter: parent.verticalCenter
-              }
-
-              Rectangle {
-                height: Style.space(20)
-                width: coreBadgeLabel.implicitWidth + Style.space(12)
-                radius: Style.cornerRadius > 0 ? Math.max(3, Style.cornerRadius) : 3
-                color: Util.alpha(root.foreground, 0.08)
-                border.width: 1
-                border.color: Util.alpha(root.foreground, 0.2)
-                anchors.verticalCenter: parent.verticalCenter
-
-                Text {
-                  id: coreBadgeLabel
-                  anchors.centerIn: parent
-                  text: "MEGAMENU"
-                  color: Color.muted
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.caption
-                  font.bold: true
-                }
-              }
             }
 
-            // Space Switcher Tabs
+            Text {
+              text: "Omarchy"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.heading
+              font.bold: true
+              anchors.verticalCenter: parent.verticalCenter
+            }
+
             Rectangle {
-              height: Style.space(36)
-              width: spacesRow.implicitWidth + Style.space(8)
-              radius: Style.cornerRadius > 0 ? Math.max(4, Style.cornerRadius) : 4
-              color: Util.alpha(root.foreground, 0.04)
+              height: Style.space(20)
+              width: coreBadgeLabel.implicitWidth + Style.space(12)
+              radius: Style.cornerRadius > 0 ? Math.max(3, Style.cornerRadius) : 3
+              color: Util.alpha(root.foreground, 0.08)
               border.width: 1
-              border.color: Util.alpha(root.foreground, 0.14)
+              border.color: Util.alpha(root.foreground, 0.2)
               anchors.verticalCenter: parent.verticalCenter
 
-              Row {
-                id: spacesRow
+              Text {
+                id: coreBadgeLabel
                 anchors.centerIn: parent
-                spacing: Style.space(4)
+                text: "MEGAMENU"
+                color: Color.muted
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+              }
+            }
+          }
 
-                Repeater {
-                  model: (root.data && root.data.spaces) ? root.data.spaces : []
-
-                  delegate: Rectangle {
-                    required property var modelData
-                    readonly property bool isCurrent: modelData.id === root.activeSpaceId
-                    height: Style.space(28)
-                    width: spaceTabRow.implicitWidth + Style.space(18)
-                    radius: Style.cornerRadius > 0 ? Math.max(3, Style.cornerRadius - 2) : 3
-                    color: isCurrent
-                      ? Util.alpha(root.roleColor("green"), 0.18)
-                      : (spaceTabMouse.containsMouse ? Util.alpha(root.foreground, 0.08) : "transparent")
-                    border.width: isCurrent ? 1 : 0
-                    border.color: Util.alpha(root.roleColor("green"), 0.55)
-
-                    Row {
-                      id: spaceTabRow
-                      anchors.centerIn: parent
-                      spacing: Style.space(6)
-
-                      Text {
-                        text: modelData.icon || "󰀻"
-                        color: isCurrent ? root.roleColor("green") : Color.muted
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.bodySmall
-                        anchors.verticalCenter: parent.verticalCenter
-                      }
-
-                      Text {
-                        text: modelData.name
-                        color: isCurrent ? root.foreground : Color.muted
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.bodySmall
-                        font.bold: isCurrent
-                        anchors.verticalCenter: parent.verticalCenter
-                      }
-                    }
-
-                    MouseArea {
-                      id: spaceTabMouse
-                      anchors.fill: parent
-                      hoverEnabled: true
-                      cursorShape: Qt.PointingHandCursor
-                      acceptedButtons: Qt.LeftButton | Qt.RightButton
-                      onClicked: function(mouse) {
-                        if (mouse.button === Qt.RightButton) {
-                          root.openSpaceModal(modelData)
-                        } else {
-                          root.switchSpace(modelData.id)
-                        }
-                      }
-                    }
+          // Space Switcher Tabs + Overflow Dropdown ("▾ More")
+          Rectangle {
+            id: spaceSwitcherBar
+            readonly property real maxAvailableWidth: Math.max(
+              Style.space(240),
+              topRightActions.x - brandRow.width - Style.spacing.md * 2
+            )
+            readonly property var allSpaces: (root.data && root.data.spaces) ? root.data.spaces : []
+            readonly property bool hasOverflow: allSpaces.length > 4 || spacesFullRowWidth > maxAvailableWidth
+            readonly property real spacesFullRowWidth: {
+              var list = allSpaces
+              var total = Style.space(44) // + button + padding
+              for (var i = 0; i < list.length; i++) {
+                var labelLen = String(list[i].name || "").length
+                total += Math.min(Style.space(150), labelLen * Style.space(7.5) + Style.space(42))
+              }
+              return total
+            }
+            readonly property var visibleInlineSpaces: {
+              var list = allSpaces
+              if (!hasOverflow) return list
+              var maxInline = 3
+              var out = []
+              var activeIncluded = false
+              for (var i = 0; i < list.length && out.length < maxInline; i++) {
+                out.push(list[i])
+                if (list[i].id === root.activeSpaceId) activeIncluded = true
+              }
+              if (!activeIncluded && out.length > 0) {
+                for (var j = 0; j < list.length; j++) {
+                  if (list[j].id === root.activeSpaceId) {
+                    out[out.length - 1] = list[j]
+                    break
                   }
                 }
+              }
+              return out
+            }
+            readonly property int hiddenSpacesCount: Math.max(0, allSpaces.length - visibleInlineSpaces.length)
 
-                // + Add Space Button
-                Rectangle {
-                  width: Style.space(28)
+            anchors.left: brandRow.right
+            anchors.leftMargin: Style.spacing.md
+            anchors.verticalCenter: parent.verticalCenter
+            height: Style.space(36)
+            width: Math.min(maxAvailableWidth, spacesRow.implicitWidth + Style.space(8))
+            clip: true
+            radius: Style.cornerRadius > 0 ? Math.max(4, Style.cornerRadius) : 4
+            color: Util.alpha(root.foreground, 0.04)
+            border.width: 1
+            border.color: Util.alpha(root.foreground, 0.14)
+
+            Row {
+              id: spacesRow
+              anchors.centerIn: parent
+              spacing: Style.space(4)
+
+              Repeater {
+                model: spaceSwitcherBar.visibleInlineSpaces
+
+                delegate: Rectangle {
+                  required property var modelData
+                  readonly property bool isCurrent: modelData.id === root.activeSpaceId
                   height: Style.space(28)
+                  width: spaceTabRow.implicitWidth + Style.space(16)
                   radius: Style.cornerRadius > 0 ? Math.max(3, Style.cornerRadius - 2) : 3
-                  color: addSpaceMouse.containsMouse ? Util.alpha(root.foreground, 0.1) : "transparent"
+                  color: isCurrent
+                    ? Util.alpha(root.roleColor("green"), 0.18)
+                    : (spaceTabMouse.containsMouse ? Util.alpha(root.foreground, 0.08) : "transparent")
+                  border.width: isCurrent ? 1 : 0
+                  border.color: Util.alpha(root.roleColor("green"), 0.55)
 
-                  Text {
+                  Row {
+                    id: spaceTabRow
                     anchors.centerIn: parent
-                    text: "+"
-                    color: Color.muted
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.body
-                    font.bold: true
+                    spacing: Style.space(6)
+
+                    Text {
+                      text: modelData.icon || "󰀻"
+                      color: isCurrent ? root.roleColor("green") : Color.muted
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.bodySmall
+                      anchors.verticalCenter: parent.verticalCenter
+                    }
+
+                    Text {
+                      width: Math.min(implicitWidth, Style.space(115))
+                      elide: Text.ElideRight
+                      text: modelData.name
+                      color: isCurrent ? root.foreground : Color.muted
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.bodySmall
+                      font.bold: isCurrent
+                      anchors.verticalCenter: parent.verticalCenter
+                    }
                   }
 
                   MouseArea {
-                    id: addSpaceMouse
+                    id: spaceTabMouse
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: root.openSpaceModal(null)
+                    acceptedButtons: Qt.LeftButton | Qt.RightButton
+                    onClicked: function(mouse) {
+                      if (mouse.button === Qt.RightButton) {
+                        root.openSpaceModal(modelData)
+                      } else {
+                        root.switchSpace(modelData.id)
+                      }
+                    }
                   }
+                }
+              }
+
+              // Overflow Dropdown Trigger ("▾ +N" or "▾")
+              Rectangle {
+                id: spacesOverflowBtn
+                visible: spaceSwitcherBar.hasOverflow || spaceSwitcherBar.allSpaces.length > 2
+                height: Style.space(28)
+                width: overflowBtnRow.implicitWidth + Style.space(14)
+                radius: Style.cornerRadius > 0 ? Math.max(3, Style.cornerRadius - 2) : 3
+                color: root.spacesDropdownOpen
+                  ? Util.alpha(root.roleColor("cyan"), 0.22)
+                  : (overflowBtnMouse.containsMouse ? Util.alpha(root.foreground, 0.1) : Util.alpha(root.foreground, 0.04))
+                border.width: root.spacesDropdownOpen || spaceSwitcherBar.hiddenSpacesCount > 0 ? 1 : 0
+                border.color: root.spacesDropdownOpen
+                  ? root.roleColor("cyan")
+                  : Util.alpha(root.foreground, 0.22)
+
+                Row {
+                  id: overflowBtnRow
+                  anchors.centerIn: parent
+                  spacing: Style.space(4)
+
+                  Text {
+                    visible: spaceSwitcherBar.hiddenSpacesCount > 0
+                    text: "+" + spaceSwitcherBar.hiddenSpacesCount
+                    color: root.spacesDropdownOpen ? root.roleColor("cyan") : root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+                    anchors.verticalCenter: parent.verticalCenter
+                  }
+
+                  Text {
+                    text: root.spacesDropdownOpen ? "▴" : "▾"
+                    color: root.spacesDropdownOpen ? root.roleColor("cyan") : Color.muted
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    font.bold: true
+                    anchors.verticalCenter: parent.verticalCenter
+                  }
+                }
+
+                MouseArea {
+                  id: overflowBtnMouse
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: root.toggleSpacesDropdown(spacesOverflowBtn)
+                }
+              }
+
+              // + Add Space Button
+              Rectangle {
+                width: Style.space(28)
+                height: Style.space(28)
+                radius: Style.cornerRadius > 0 ? Math.max(3, Style.cornerRadius - 2) : 3
+                color: addSpaceMouse.containsMouse ? Util.alpha(root.foreground, 0.1) : "transparent"
+
+                Text {
+                  anchors.centerIn: parent
+                  text: "+"
+                  color: Color.muted
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                  font.bold: true
+                }
+
+                MouseArea {
+                  id: addSpaceMouse
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: root.openSpaceModal(null)
                 }
               }
             }
@@ -1115,6 +1633,7 @@ Item {
 
           // Top Right Actions
           Row {
+            id: topRightActions
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
             spacing: Style.spacing.xs
@@ -1207,6 +1726,7 @@ Item {
                 clip: true
                 selectByMouse: true
                 onTextChanged: {
+                  root.keyboardGridNavActive = false
                   root.searchQuery = text
                   root.selectedAppIndex = 0
                   root.ensureSelectedValid()
@@ -1511,13 +2031,13 @@ Item {
                 required property int index
                 readonly property var orbitItem: root.pinnedOrbit[index]
                 readonly property color orbitAccent: orbitItem
-                  ? root.roleColor(orbitItem.colorRole)
+                  ? root.itemAccentColor(orbitItem, "")
                   : Util.alpha(root.foreground, 0.2)
                 width: (orbitRow.width - Style.space(10) * 5) / 6
                 height: Style.space(76)
                 radius: Style.cornerRadius > 0 ? Math.max(6, Style.cornerRadius) : 6
                 color: orbitMouse.containsMouse
-                  ? Util.alpha(orbitAccent, 0.14)
+                  ? Util.alpha(orbitAccent, 0.16)
                   : Util.alpha(root.foreground, 0.035)
                 border.width: orbitMouse.containsMouse ? 1.5 : 1
                 border.color: orbitMouse.containsMouse
@@ -1539,6 +2059,7 @@ Item {
 
                     ItemIconBadge {
                       itemData: orbitItem
+                      activeHighlight: orbitMouse.containsMouse
                       boxSize: Style.space(28)
                       anchors.verticalCenter: parent.verticalCenter
                     }
@@ -1705,25 +2226,51 @@ Item {
               height: parent.height
               spacing: Style.space(12)
 
-              Repeater {
-                model: {
-                  if (root.activeFilter !== "all" && root.activeFilter !== "favorites") {
-                    var filtered = []
-                    for (var i = 0; i < root.currentCategories.length; i++) {
-                      if (root.currentCategories[i].id === root.activeFilter) {
-                        filtered.push(root.currentCategories[i])
-                      }
-                    }
-                    return filtered
-                  }
-                  return root.currentCategories
+              readonly property bool hasLiveCategories: {
+                for (var i = 0; i < root.currentCategories.length; i++) {
+                  var t = root.currentCategories[i].type
+                  if (t === "rss" || t === "github") return true
                 }
+                return false
+              }
+              readonly property int maxVisibleCols: hasLiveCategories ? 2 : 4
+
+              readonly property var activeCategoryList: {
+                var baseList = []
+                if (root.activeFilter !== "all" && root.activeFilter !== "favorites") {
+                  for (var i = 0; i < root.currentCategories.length; i++) {
+                    if (root.currentCategories[i].id === root.activeFilter) {
+                      baseList.push(root.currentCategories[i])
+                    }
+                  }
+                } else {
+                  for (var j = 0; j < root.currentCategories.length; j++) {
+                    baseList.push(root.currentCategories[j])
+                  }
+                }
+                if (root.searchSystemColumnItems && root.searchSystemColumnItems.length > 0) {
+                  baseList.push({
+                    id: "__omarchy_system__",
+                    name: root.tr("omarchyColumnName"),
+                    icon: "󱓞",
+                    colorRole: "cyan",
+                    type: "omarchy"
+                  })
+                }
+                return baseList
+              }
+
+              Repeater {
+                model: categoriesRow.activeCategoryList
 
                 delegate: Rectangle {
                   id: catColumnCard
                   required property var modelData
+                  readonly property bool isLiveCat: modelData.type === "rss" || modelData.type === "github"
+                  readonly property bool isOmarchyCat: modelData.type === "omarchy"
                   readonly property color catAccent: root.roleColor(modelData.colorRole)
                   readonly property var columnItems: {
+                    if (isOmarchyCat) return root.searchSystemColumnItems
                     var all = root.filteredFlatItems
                     var list = []
                     for (var i = 0; i < all.length; i++) {
@@ -1732,7 +2279,15 @@ Item {
                     return list
                   }
 
-                  width: Math.max(Style.space(280), (gridContainer.width - Style.space(12) * 3) / Math.min(4, Math.max(1, root.currentCategories.length)))
+                  readonly property int visibleColCount: Math.min(
+                    categoriesRow.maxVisibleCols,
+                    Math.max(1, categoriesRow.activeCategoryList.length)
+                  )
+
+                  width: Math.max(
+                    isLiveCat ? Style.space(420) : Style.space(280),
+                    (gridContainer.width - Style.space(12) * Math.max(0, visibleColCount - 1)) / visibleColCount
+                  )
                   height: parent.height
                   radius: Style.cornerRadius > 0 ? Math.max(6, Style.cornerRadius) : 6
                   color: Util.alpha(root.foreground, 0.025)
@@ -1763,15 +2318,17 @@ Item {
                       Item {
                         anchors.left: parent.left
                         anchors.verticalCenter: parent.verticalCenter
-                        width: catHeaderRow.implicitWidth
+                        width: Math.max(Style.space(80), parent.width - catRightControls.width - Style.space(10))
                         height: parent.height
 
                         Row {
                           id: catHeaderRow
+                          width: parent.width
                           anchors.verticalCenter: parent.verticalCenter
                           spacing: Style.space(8)
 
                           Text {
+                            id: catIconText
                             text: modelData.icon || "󰉋"
                             color: catColumnCard.catAccent
                             font.family: root.fontFamily
@@ -1780,6 +2337,14 @@ Item {
                           }
 
                           Text {
+                            width: Math.min(
+                              implicitWidth,
+                              Math.max(
+                                Style.space(50),
+                                parent.width - catIconText.implicitWidth - (liveTypeBadge.visible ? liveTypeBadge.width + Style.space(16) : Style.space(8))
+                              )
+                            )
+                            elide: Text.ElideRight
                             text: modelData.name
                             color: root.foreground
                             font.family: root.fontFamily
@@ -1787,16 +2352,40 @@ Item {
                             font.bold: true
                             anchors.verticalCenter: parent.verticalCenter
                           }
+
+                          Rectangle {
+                            id: liveTypeBadge
+                            visible: catColumnCard.isLiveCat
+                            height: Style.space(16)
+                            width: liveTypeTag.implicitWidth + Style.space(8)
+                            radius: 3
+                            color: Util.alpha(catColumnCard.catAccent, 0.2)
+                            anchors.verticalCenter: parent.verticalCenter
+
+                            Text {
+                              id: liveTypeTag
+                              anchors.centerIn: parent
+                              text: modelData.type === "github" ? "GH" : "RSS"
+                              color: catColumnCard.catAccent
+                              font.family: root.fontFamily
+                              font.pixelSize: Style.font.caption - 2
+                              font.bold: true
+                            }
+                          }
                         }
 
                         MouseArea {
                           anchors.fill: parent
-                          cursorShape: Qt.PointingHandCursor
-                          onClicked: root.openCategoryModal(modelData)
+                          enabled: !catColumnCard.isOmarchyCat
+                          cursorShape: catColumnCard.isOmarchyCat ? Qt.ArrowCursor : Qt.PointingHandCursor
+                          onClicked: {
+                            if (!catColumnCard.isOmarchyCat) root.openCategoryModal(modelData)
+                          }
                         }
                       }
 
                       Row {
+                        id: catRightControls
                         anchors.right: parent.right
                         anchors.verticalCenter: parent.verticalCenter
                         spacing: Style.space(6)
@@ -1822,6 +2411,7 @@ Item {
                         }
 
                         Rectangle {
+                          visible: !catColumnCard.isOmarchyCat
                           width: Style.space(22)
                           height: Style.space(20)
                           radius: Style.cornerRadius > 0 ? Math.max(3, Style.cornerRadius - 2) : 3
@@ -1830,7 +2420,7 @@ Item {
 
                           Text {
                             anchors.centerIn: parent
-                            text: "+"
+                            text: (modelData.type === "rss" || modelData.type === "github") ? "󰑐" : "+"
                             color: catColumnCard.catAccent
                             font.family: root.fontFamily
                             font.pixelSize: Style.font.bodySmall
@@ -1842,10 +2432,32 @@ Item {
                             anchors.fill: parent
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: root.openAddItemModal(modelData.id, 0)
+                            onClicked: {
+                              if (modelData.type === "rss" || modelData.type === "github") {
+                                root.refreshLiveFeeds(true, modelData.id)
+                              } else {
+                                root.openAddItemModal(modelData.id, 0)
+                              }
+                            }
                           }
+
+                          ToolTip.visible: addInCatMouse.containsMouse && (modelData.type === "rss" || modelData.type === "github")
+                          ToolTip.text: root.tr("liveRefreshTooltip")
                         }
                       }
+                    }
+
+                    // Empty / Loading State for Live Feed Column
+                    Text {
+                      visible: (modelData.type === "rss" || modelData.type === "github") && catColumnCard.columnItems.length === 0
+                      width: parent.width
+                      wrapMode: Text.WordWrap
+                      topPadding: Style.space(16)
+                      horizontalAlignment: Text.AlignHCenter
+                      text: root.fetchingLiveFeeds ? root.tr("liveFetchingText") : root.tr("liveEmptyText")
+                      color: Color.muted
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.bodySmall
                     }
 
                     // Items List inside Category Column
@@ -1858,22 +2470,48 @@ Item {
                       model: catColumnCard.columnItems
                       boundsBehavior: Flickable.StopAtBounds
 
+                      readonly property int selectedIndexInColumn: {
+                        var list = catColumnCard.columnItems
+                        var selId = root.selectedItemId
+                        if (!selId || !list) return -1
+                        for (var i = 0; i < list.length; i++) {
+                          if (list[i].id === selId) return i
+                        }
+                        return -1
+                      }
+
+                      onSelectedIndexInColumnChanged: {
+                        if (selectedIndexInColumn >= 0) {
+                          catListView.positionViewAtIndex(selectedIndexInColumn, ListView.Contain)
+                          var colLeft = catColumnCard.x
+                          var colRight = catColumnCard.x + catColumnCard.width
+                          if (colLeft < categoriesFlick.contentX) {
+                            categoriesFlick.contentX = colLeft
+                          } else if (colRight > categoriesFlick.contentX + categoriesFlick.width) {
+                            categoriesFlick.contentX = Math.max(0, colRight - categoriesFlick.width)
+                          }
+                        }
+                      }
+
                       delegate: Rectangle {
                         id: itemRowRect
                         required property var modelData
                         readonly property bool isSelected: root.selectedItemId === modelData.id
                         readonly property bool isHovered: rowMouse.containsMouse
-                        readonly property color rowAccent: root.roleColor(modelData.colorRole || catColumnCard.modelData.colorRole)
+                        readonly property color rowAccent: root.itemAccentColor(modelData, catColumnCard.modelData.colorRole)
+                        readonly property bool isLiveEntry: modelData.isLiveItem === true
 
                         width: catListView.width
-                        height: Style.space(52)
+                        height: isLiveEntry
+                          ? Math.max(Style.space(58), itemTextCol.implicitHeight + Style.space(18))
+                          : Style.space(52)
                         radius: Style.cornerRadius > 0 ? Math.max(5, Style.cornerRadius - 1) : 5
                         color: (isHovered || isSelected)
-                          ? Util.alpha(rowAccent, 0.14)
+                          ? Util.alpha(rowAccent, 0.16)
                           : "transparent"
                         border.width: (isHovered || isSelected) ? 1 : 0
                         border.color: (isHovered || isSelected)
-                          ? Util.alpha(rowAccent, 0.55)
+                          ? Util.alpha(rowAccent, 0.6)
                           : "transparent"
 
                         Row {
@@ -1884,31 +2522,37 @@ Item {
 
                           ItemIconBadge {
                             itemData: modelData
+                            fallbackRole: catColumnCard.modelData.colorRole || ""
+                            activeHighlight: itemRowRect.isHovered || itemRowRect.isSelected
                             boxSize: Style.space(32)
                             anchors.verticalCenter: parent.verticalCenter
                           }
 
                           Column {
-                            width: parent.width - Style.space(104)
+                            id: itemTextCol
+                            width: Math.max(Style.space(80), parent.width - Style.space(42) - rowRightActions.width - Style.space(8))
                             anchors.verticalCenter: parent.verticalCenter
-                            spacing: 2
+                            spacing: 3
+
+                            Text {
+                              width: parent.width
+                              wrapMode: itemRowRect.isLiveEntry ? Text.Wrap : Text.NoWrap
+                              maximumLineCount: itemRowRect.isLiveEntry ? 2 : 1
+                              elide: Text.ElideRight
+                              text: modelData.title
+                              color: (itemRowRect.isHovered || itemRowRect.isSelected) ? itemRowRect.rowAccent : root.foreground
+                              font.family: root.fontFamily
+                              font.pixelSize: Style.font.bodySmall
+                              font.bold: true
+                            }
 
                             Row {
-                              spacing: Style.space(6)
                               width: parent.width
-
-                              Text {
-                                width: Math.min(implicitWidth, parent.width - Style.space(20))
-                                elide: Text.ElideRight
-                                text: modelData.title
-                                color: (itemRowRect.isHovered || itemRowRect.isSelected) ? root.selectedText : root.foreground
-                                font.family: root.fontFamily
-                                font.pixelSize: Style.font.bodySmall
-                                font.bold: true
-                              }
+                              spacing: Style.space(6)
 
                               Rectangle {
-                                visible: modelData.type === "app"
+                                id: inlineItemTag
+                                visible: modelData.type === "app" || String(modelData.badgeText || "").length > 0
                                 height: Style.space(15)
                                 width: appTagText.implicitWidth + Style.space(8)
                                 radius: 3
@@ -1918,22 +2562,26 @@ Item {
                                 Text {
                                   id: appTagText
                                   anchors.centerIn: parent
-                                  text: "APP"
+                                  text: String(modelData.badgeText || (modelData.type === "app" ? "APP" : ""))
                                   color: itemRowRect.rowAccent
                                   font.family: root.fontFamily
                                   font.pixelSize: Style.font.caption - 2
                                   font.bold: true
                                 }
                               }
-                            }
 
-                            Text {
-                              width: parent.width
-                              elide: Text.ElideRight
-                              text: modelData.subtitle || Storage.extractDomain(modelData.url)
-                              color: Color.muted
-                              font.family: root.fontFamily
-                              font.pixelSize: Style.font.caption
+                              Text {
+                                width: Math.max(
+                                  Style.space(40),
+                                  parent.width - (inlineItemTag.visible ? inlineItemTag.width + Style.space(6) : 0)
+                                )
+                                elide: Text.ElideRight
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: modelData.subtitle || Storage.extractDomain(modelData.url)
+                                color: Color.muted
+                                font.family: root.fontFamily
+                                font.pixelSize: Style.font.caption
+                              }
                             }
                           }
                         }
@@ -1942,7 +2590,7 @@ Item {
                         MouseArea {
                           id: rowMouse
                           anchors.fill: parent
-                          anchors.rightMargin: Style.space(56)
+                          anchors.rightMargin: rowRightActions.width + Style.space(10)
                           hoverEnabled: true
                           cursorShape: Qt.PointingHandCursor
                           acceptedButtons: Qt.LeftButton | Qt.RightButton
@@ -1960,12 +2608,13 @@ Item {
 
                         // Right Action Icons (Favorite Star + ⋮ Context Menu button)
                         Row {
+                          id: rowRightActions
                           anchors.right: parent.right
                           anchors.rightMargin: Style.space(6)
                           anchors.verticalCenter: parent.verticalCenter
                           spacing: Style.space(4)
 
-                          // Favorite Star Toggle
+                          // Favorite Star Toggle (or Save Bookmark for Live Items)
                           Rectangle {
                             width: Style.space(24)
                             height: Style.space(24)
@@ -1975,7 +2624,7 @@ Item {
 
                             Text {
                               anchors.centerIn: parent
-                              text: modelData.favorite ? "★" : "☆"
+                              text: (modelData.isLiveItem || modelData.isSystemResult) ? "󰐃" : (modelData.favorite ? "★" : "☆")
                               color: modelData.favorite ? root.roleColor("yellow") : Color.muted
                               font.family: root.fontFamily
                               font.pixelSize: Style.font.bodySmall
@@ -1987,7 +2636,11 @@ Item {
                               hoverEnabled: true
                               cursorShape: Qt.PointingHandCursor
                               onClicked: {
-                                root.commitData(Storage.toggleFavorite(root.data, modelData.id))
+                                if (modelData.isLiveItem || modelData.isSystemResult) {
+                                  root.pinLiveItemAsBookmark(modelData)
+                                } else {
+                                  root.commitData(Storage.toggleFavorite(root.data, modelData.id))
+                                }
                               }
                             }
                           }
@@ -2076,16 +2729,18 @@ Item {
                     required property int index
                     readonly property string appName: modelData.name || modelData.id || ""
                     readonly property string appSub: modelData.subtext || modelData.id || ""
+                    readonly property bool isOmarchyEntry: modelData.entryKind === "omarchy"
+                    readonly property color entryAccent: isOmarchyEntry ? root.roleColor("cyan") : root.roleColor("green")
                     readonly property bool isSelected: index === root.selectedAppIndex
                     width: ListView.view.width
                     height: Style.space(46)
                     radius: 5
                     color: (sysAppMouse.containsMouse || isSelected)
-                      ? Util.alpha(root.roleColor("green"), 0.16)
+                      ? Util.alpha(entryAccent, 0.16)
                       : Util.alpha(root.foreground, 0.03)
                     border.width: 1
                     border.color: (sysAppMouse.containsMouse || isSelected)
-                      ? root.roleColor("green")
+                      ? entryAccent
                       : Util.alpha(root.foreground, 0.1)
 
                     Row {
@@ -2102,23 +2757,25 @@ Item {
                         Image {
                           id: sysAppIconImg
                           anchors.fill: parent
-                          source: root.resolveAppIconSource(modelData.icon || "")
+                          source: isOmarchyEntry ? "" : root.resolveAppIconSource(modelData.icon || "")
                           smooth: true
-                          visible: status === Image.Ready
+                          visible: !isOmarchyEntry && status === Image.Ready
                         }
 
                         Rectangle {
                           anchors.fill: parent
                           radius: 5
-                          visible: sysAppIconImg.status !== Image.Ready
-                          color: Util.alpha(root.roleColor("green"), 0.2)
+                          visible: isOmarchyEntry || sysAppIconImg.status !== Image.Ready
+                          color: Util.alpha(entryAccent, 0.2)
                           border.width: 1
-                          border.color: Util.alpha(root.roleColor("green"), 0.45)
+                          border.color: Util.alpha(entryAccent, 0.45)
 
                           Text {
                             anchors.centerIn: parent
-                            text: appName.length > 0 ? appName.slice(0, 1).toUpperCase() : "A"
-                            color: root.roleColor("green")
+                            text: isOmarchyEntry
+                              ? (modelData.icon || "󱓞")
+                              : (appName.length > 0 ? appName.slice(0, 1).toUpperCase() : "A")
+                            color: entryAccent
                             font.family: root.fontFamily
                             font.pixelSize: Style.font.bodySmall
                             font.bold: true
@@ -2164,9 +2821,10 @@ Item {
                             title: appName,
                             subtitle: appSub || modelData.id,
                             desktopId: modelData.id,
-                            iconType: "system",
-                            iconValue: modelData.icon || "",
-                            colorRole: "green"
+                            iconType: isOmarchyEntry ? "glyph" : "system",
+                            iconValue: modelData.icon || (isOmarchyEntry ? "󱓞" : ""),
+                            badgeText: isOmarchyEntry ? "OMARCHY" : "APP",
+                            colorRole: isOmarchyEntry ? "cyan" : "green"
                           })
                           root.commitData(next)
                           root.showStatus(root.tr("statusAppPinned") + appName)
@@ -2254,8 +2912,24 @@ Item {
       }
 
       // ============================================================
-      // 6. FLOATING CONTEXT MENU (Right-click on any item)
+      // 6. FLOATING CONTEXT MENU & DROPDOWN BACKDROP + POPUPS
       // ============================================================
+      MouseArea {
+        id: popupDismissBackdrop
+        anchors.fill: parent
+        visible: root.contextMenuOpen || root.spacesDropdownOpen
+        acceptedButtons: Qt.AllButtons
+        z: 48
+        onPressed: function(mouse) {
+          root.closeContextMenu()
+          mouse.accepted = true
+        }
+        onWheel: function(wheel) {
+          root.closeContextMenu()
+          wheel.accepted = true
+        }
+      }
+
       Rectangle {
         id: contextMenuPopup
         visible: root.contextMenuOpen && root.contextMenuItem !== null
@@ -2268,6 +2942,11 @@ Item {
         border.width: 1.5
         border.color: Color.popups.border
         z: 50
+
+        MouseArea {
+          anchors.fill: parent
+          acceptedButtons: Qt.AllButtons
+        }
 
         Column {
           id: contextMenuCol
@@ -2415,8 +3094,37 @@ Item {
             }
           }
 
-          // Edit Bookmark / Item
+          // Save Live Item as Permanent Bookmark (only for Live Feed or Omarchy/App search items)
           Rectangle {
+            visible: root.contextMenuItem !== null && (root.contextMenuItem.isLiveItem === true || root.contextMenuItem.isSystemResult === true)
+            width: contextMenuCol.width
+            height: Style.space(30)
+            radius: 4
+            color: pinLiveCtxMouse.containsMouse ? root.selectedBackground : "transparent"
+
+            Text {
+              anchors.left: parent.left
+              anchors.leftMargin: Style.space(8)
+              anchors.verticalCenter: parent.verticalCenter
+              text: root.tr("ctxPinLiveItem")
+              color: pinLiveCtxMouse.containsMouse ? root.selectedText : root.roleColor("green")
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              font.bold: true
+            }
+
+            MouseArea {
+              id: pinLiveCtxMouse
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.pinLiveItemAsBookmark(root.contextMenuItem)
+            }
+          }
+
+          // Edit Bookmark / Item (only for static bookmarks)
+          Rectangle {
+            visible: root.contextMenuItem === null || (root.contextMenuItem.isLiveItem !== true && root.contextMenuItem.isSystemResult !== true)
             width: contextMenuCol.width
             height: Style.space(30)
             radius: 4
@@ -2451,8 +3159,9 @@ Item {
             }
           }
 
-          // Delete Item
+          // Delete Item (only for static bookmarks)
           Rectangle {
+            visible: root.contextMenuItem === null || (root.contextMenuItem.isLiveItem !== true && root.contextMenuItem.isSystemResult !== true)
             width: contextMenuCol.width
             height: Style.space(30)
             radius: 4
@@ -2482,6 +3191,168 @@ Item {
                   root.showStatus(root.tr("statusItemDeleted") + target.title)
                 }
               }
+            }
+          }
+        }
+      }
+
+      // ============================================================
+      // 6B. FLOATING SPACES DROPDOWN MENU
+      // ============================================================
+      Rectangle {
+        id: spacesDropdownPopup
+        visible: root.spacesDropdownOpen
+        x: root.spacesDropdownX
+        y: root.spacesDropdownY
+        width: Style.space(254)
+        height: spacesDropdownCol.implicitHeight + Style.space(16)
+        radius: Style.cornerRadius > 0 ? Math.max(6, Style.cornerRadius) : 6
+        color: Color.popups.background
+        border.width: 1.5
+        border.color: Color.popups.border
+        z: 55
+
+        MouseArea {
+          anchors.fill: parent
+          acceptedButtons: Qt.AllButtons
+        }
+
+        Column {
+          id: spacesDropdownCol
+          anchors.fill: parent
+          anchors.margins: Style.space(8)
+          spacing: Style.space(4)
+
+          Text {
+            text: root.tr("spacesDropdownHeader")
+            color: Color.muted
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption - 1
+            font.bold: true
+            leftPadding: Style.space(8)
+            topPadding: Style.space(2)
+            bottomPadding: Style.space(2)
+          }
+
+          Repeater {
+            model: (root.data && root.data.spaces) ? root.data.spaces : []
+
+            delegate: Rectangle {
+              required property var modelData
+              readonly property bool isCurrent: modelData.id === root.activeSpaceId
+              width: spacesDropdownCol.width
+              height: Style.space(32)
+              radius: 4
+              color: isCurrent
+                ? Util.alpha(root.roleColor("green"), 0.18)
+                : (spaceDropRowMouse.containsMouse ? root.selectedBackground : "transparent")
+              border.width: isCurrent ? 1 : 0
+              border.color: Util.alpha(root.roleColor("green"), 0.5)
+
+              Row {
+                anchors.left: parent.left
+                anchors.leftMargin: Style.space(8)
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: Style.space(8)
+
+                Text {
+                  text: modelData.icon || "󰀻"
+                  color: isCurrent
+                    ? root.roleColor("green")
+                    : (spaceDropRowMouse.containsMouse ? root.selectedText : Color.muted)
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+                  anchors.verticalCenter: parent.verticalCenter
+                }
+
+                Text {
+                  width: Style.space(155)
+                  elide: Text.ElideRight
+                  text: modelData.name
+                  color: isCurrent
+                    ? root.foreground
+                    : (spaceDropRowMouse.containsMouse ? root.selectedText : root.foreground)
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+                  font.bold: isCurrent
+                  anchors.verticalCenter: parent.verticalCenter
+                }
+              }
+
+              MouseArea {
+                id: spaceDropRowMouse
+                anchors.fill: parent
+                anchors.rightMargin: Style.space(34)
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                acceptedButtons: Qt.LeftButton | Qt.RightButton
+                onClicked: function(mouse) {
+                  if (mouse.button === Qt.RightButton) {
+                    root.openSpaceModal(modelData)
+                  } else {
+                    root.switchSpace(modelData.id)
+                  }
+                }
+              }
+
+              // Edit Space Icon Button
+              Rectangle {
+                width: Style.space(24)
+                height: Style.space(24)
+                radius: 4
+                anchors.right: parent.right
+                anchors.rightMargin: Style.space(4)
+                anchors.verticalCenter: parent.verticalCenter
+                color: editSpaceDropMouse.containsMouse ? Util.alpha(root.foreground, 0.14) : "transparent"
+
+                Text {
+                  anchors.centerIn: parent
+                  text: "󰏫"
+                  color: editSpaceDropMouse.containsMouse ? root.foreground : Color.muted
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
+
+                MouseArea {
+                  id: editSpaceDropMouse
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: root.openSpaceModal(modelData)
+                }
+              }
+            }
+          }
+
+          Rectangle {
+            width: spacesDropdownCol.width
+            height: 1
+            color: Util.alpha(root.foreground, 0.14)
+          }
+
+          Rectangle {
+            width: spacesDropdownCol.width
+            height: Style.space(30)
+            radius: 4
+            color: addSpaceDropMouse.containsMouse ? root.selectedBackground : "transparent"
+
+            Text {
+              anchors.left: parent.left
+              anchors.leftMargin: Style.space(8)
+              anchors.verticalCenter: parent.verticalCenter
+              text: root.tr("spacesAddAction")
+              color: addSpaceDropMouse.containsMouse ? root.selectedText : root.roleColor("green")
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              font.bold: true
+            }
+
+            MouseArea {
+              id: addSpaceDropMouse
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.openSpaceModal(null)
             }
           }
         }
@@ -2588,18 +3459,23 @@ Item {
                   anchors.fill: parent
                   anchors.margins: Style.space(4)
                   clip: true
-                  model: Storage.searchDesktopEntries(
-                    (DesktopEntries && DesktopEntries.applications && DesktopEntries.applications.values)
-                      ? DesktopEntries.applications.values
-                      : [],
-                    root.formAppSearchQuery,
-                    root.hiddenDesktopIds,
-                    30
-                  )
+                  model: {
+                    var om = Storage.searchOmarchyMenuEntries(root.omarchyMenuEntries, root.formAppSearchQuery, 15)
+                    var apps = Storage.searchDesktopEntries(
+                      (DesktopEntries && DesktopEntries.applications && DesktopEntries.applications.values)
+                        ? DesktopEntries.applications.values
+                        : [],
+                      root.formAppSearchQuery,
+                      root.hiddenDesktopIds,
+                      30
+                    )
+                    return om.concat(apps)
+                  }
 
                   delegate: Rectangle {
                     required property var modelData
                     readonly property string entryTitle: modelData.name || modelData.id || ""
+                    readonly property bool isOmarchyEntry: modelData.entryKind === "omarchy"
                     width: ListView.view.width
                     height: Style.space(26)
                     radius: 3
@@ -2614,8 +3490,8 @@ Item {
                       anchors.rightMargin: Style.space(8)
                       anchors.verticalCenter: parent.verticalCenter
                       elide: Text.ElideRight
-                      text: entryTitle + "  (" + modelData.id + ")"
-                      color: root.foreground
+                      text: (isOmarchyEntry ? (modelData.icon + "  ") : "") + entryTitle + "  (" + (modelData.subtext || modelData.id) + ")"
+                      color: isOmarchyEntry ? root.roleColor("cyan") : root.foreground
                       font.family: root.fontFamily
                       font.pixelSize: Style.font.caption
                     }
@@ -2629,7 +3505,7 @@ Item {
                         root.formItemDesktopId = modelData.id
                         root.formItemTitle = entryTitle
                         root.formItemSubtitle = modelData.subtext || modelData.id
-                        root.formItemIconType = "system"
+                        root.formItemIconType = isOmarchyEntry ? "glyph" : "system"
                         root.formItemIconValue = modelData.icon || ""
                       }
                     }
@@ -2706,15 +3582,22 @@ Item {
               }
             }
 
-            // Pinned Quick Orbit Slot [0..6] & Badge
+            // Pinned Quick Orbit Slot [0..6] & Badge / Custom Icon
             Row {
               width: parent.width
               spacing: Style.space(10)
 
               Column {
-                width: (parent.width - Style.space(10)) * 0.62
+                width: (parent.width - Style.space(10)) * 0.56
                 spacing: 4
-                Text { text: root.tr("fieldPinOrbit"); color: Color.muted; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
+                Text {
+                  width: parent.width
+                  elide: Text.ElideRight
+                  text: root.tr("fieldPinOrbit")
+                  color: Color.muted
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
 
                 Row {
                   spacing: Style.space(4)
@@ -2732,28 +3615,53 @@ Item {
               }
 
               Column {
-                width: (parent.width - Style.space(10)) * 0.38
+                width: (parent.width - Style.space(10)) * 0.44
                 spacing: 4
-                Text { text: root.tr("fieldBadgeAndIcon"); color: Color.muted; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
                 Row {
                   width: parent.width
                   spacing: Style.space(6)
-                  TextField {
-                    width: parent.width * 0.58
-                    placeholderText: "Live / Work"
-                    text: root.formItemBadgeText
-                    onTextChanged: root.formItemBadgeText = text
+
+                  Column {
+                    width: (parent.width - Style.space(6)) * 0.54
+                    spacing: 4
+                    Text {
+                      width: parent.width
+                      elide: Text.ElideRight
+                      text: root.tr("fieldBadge")
+                      color: Color.muted
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                    }
+                    TextField {
+                      width: parent.width
+                      placeholderText: "Live / Work"
+                      text: root.formItemBadgeText
+                      onTextChanged: root.formItemBadgeText = text
+                    }
                   }
-                  TextField {
-                    width: parent.width * 0.38
-                    placeholderText: "󰊤"
-                    text: root.formItemIconValue
-                    onTextChanged: {
-                      root.formItemIconValue = text
-                      if (text.trim().length > 0 && root.formItemType === "url") {
-                        root.formItemIconType = "glyph"
-                      } else if (root.formItemType === "url") {
-                        root.formItemIconType = "favicon"
+
+                  Column {
+                    width: (parent.width - Style.space(6)) * 0.46
+                    spacing: 4
+                    Text {
+                      width: parent.width
+                      elide: Text.ElideRight
+                      text: root.tr("fieldCustomIcon")
+                      color: Color.muted
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                    }
+                    TextField {
+                      width: parent.width
+                      placeholderText: "󰊤"
+                      text: root.formItemIconValue
+                      onTextChanged: {
+                        root.formItemIconValue = text
+                        if (text.trim().length > 0 && root.formItemType === "url") {
+                          root.formItemIconType = "glyph"
+                        } else if (root.formItemType === "url") {
+                          root.formItemIconType = "favicon"
+                        }
                       }
                     }
                   }
@@ -2769,6 +3677,15 @@ Item {
 
               Row {
                 spacing: Style.space(8)
+
+                Button {
+                  text: root.tr("colorNone")
+                  bordered: true
+                  selected: root.formItemColorRole === ""
+                  anchors.verticalCenter: parent.verticalCenter
+                  onClicked: root.formItemColorRole = ""
+                }
+
                 Repeater {
                   model: ThemePalette.COLOR_ROLES
                   delegate: Rectangle {
@@ -2779,11 +3696,14 @@ Item {
                     color: root.roleColor(modelData.id)
                     border.width: root.formItemColorRole === modelData.id ? 3 : 1
                     border.color: root.formItemColorRole === modelData.id ? root.foreground : Util.alpha(root.background, 0.5)
+                    anchors.verticalCenter: parent.verticalCenter
 
                     MouseArea {
                       anchors.fill: parent
                       cursorShape: Qt.PointingHandCursor
-                      onClicked: root.formItemColorRole = modelData.id
+                      onClicked: {
+                        root.formItemColorRole = (root.formItemColorRole === modelData.id) ? "" : modelData.id
+                      }
                     }
                   }
                 }
@@ -2812,11 +3732,11 @@ Item {
         }
 
         // ------------------------------------------------------------
-        // MODAL B: Add / Edit Category
+        // MODAL B: Add / Edit Category (Supports Static, RSS & GitHub Live Feeds)
         // ------------------------------------------------------------
         BorderSurface {
           visible: root.activeModal === "editCategory"
-          width: Math.min(Style.space(440), parent.width - Style.space(40))
+          width: Math.min(Style.space(520), parent.width - Style.space(40))
           height: catModalCol.implicitHeight + Style.space(36)
           anchors.centerIn: parent
           radius: root.cornerRadius
@@ -2838,6 +3758,44 @@ Item {
               font.family: root.fontFamily
               font.pixelSize: Style.font.title
               font.bold: true
+            }
+
+            // Column Source Type Selector (Static / RSS / GitHub)
+            Column {
+              width: parent.width
+              spacing: 4
+              Text { text: root.tr("fieldCategoryType"); color: Color.muted; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
+
+              Row {
+                spacing: Style.space(6)
+
+                Button {
+                  text: root.tr("catTypeStatic")
+                  bordered: true
+                  selected: root.formCategoryType === "static"
+                  onClicked: root.formCategoryType = "static"
+                }
+
+                Button {
+                  text: root.tr("catTypeRss")
+                  bordered: true
+                  selected: root.formCategoryType === "rss"
+                  onClicked: {
+                    root.formCategoryType = "rss"
+                    if (root.formCategoryIcon === "󰉋" || root.formCategoryIcon === "󰊤") root.formCategoryIcon = "󰑫"
+                  }
+                }
+
+                Button {
+                  text: root.tr("catTypeGithub")
+                  bordered: true
+                  selected: root.formCategoryType === "github"
+                  onClicked: {
+                    root.formCategoryType = "github"
+                    if (root.formCategoryIcon === "󰉋" || root.formCategoryIcon === "󰑫") root.formCategoryIcon = "󰊤"
+                  }
+                }
+              }
             }
 
             Row {
@@ -2866,6 +3824,104 @@ Item {
                   placeholderText: "󰉋"
                   text: root.formCategoryIcon
                   onTextChanged: root.formCategoryIcon = text
+                }
+              }
+            }
+
+            // Live Feed URL / Repo Field (shown when type is rss or github)
+            Column {
+              visible: root.formCategoryType === "rss" || root.formCategoryType === "github"
+              width: parent.width
+              spacing: 6
+
+              Text {
+                text: root.formCategoryType === "github" ? root.tr("fieldFeedUrlGithub") : root.tr("fieldFeedUrlRss")
+                color: Color.muted
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+
+              TextField {
+                width: parent.width
+                placeholderText: root.formCategoryType === "github" ? root.tr("fieldFeedUrlGithubPlaceholder") : root.tr("fieldFeedUrlRssPlaceholder")
+                text: root.formCategoryFeedUrl
+                onTextChanged: root.formCategoryFeedUrl = text
+              }
+
+              // GitHub Mode Selector (all / issues / prs / releases)
+              Column {
+                visible: root.formCategoryType === "github"
+                width: parent.width
+                spacing: 4
+
+                Text { text: root.tr("fieldGithubMode"); color: Color.muted; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
+
+                Flow {
+                  width: parent.width
+                  spacing: Style.space(6)
+
+                  Button {
+                    text: root.tr("ghModeAll")
+                    bordered: true
+                    selected: root.formCategoryFeedMode === "all"
+                    onClicked: root.formCategoryFeedMode = "all"
+                  }
+                  Button {
+                    text: root.tr("ghModeIssues")
+                    bordered: true
+                    selected: root.formCategoryFeedMode === "issues"
+                    onClicked: root.formCategoryFeedMode = "issues"
+                  }
+                  Button {
+                    text: root.tr("ghModePrs")
+                    bordered: true
+                    selected: root.formCategoryFeedMode === "prs"
+                    onClicked: root.formCategoryFeedMode = "prs"
+                  }
+                  Button {
+                    text: root.tr("ghModeReleases")
+                    bordered: true
+                    selected: root.formCategoryFeedMode === "releases"
+                    onClicked: root.formCategoryFeedMode = "releases"
+                  }
+                }
+              }
+
+              // Quick Feed Presets
+              Text { text: root.tr("feedPresetsLabel"); color: Color.muted; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
+
+              Flow {
+                width: parent.width
+                spacing: Style.space(6)
+
+                Repeater {
+                  model: root.formCategoryType === "github"
+                    ? [
+                        { label: "Omarchy PRs & Issues", name: "Omarchy Activity", icon: "󰊤", url: "basecamp/omarchy", mode: "all", color: "green" },
+                        { label: "Omarchy Releases", name: "Omarchy Releases", icon: "󰓾", url: "basecamp/omarchy", mode: "releases", color: "cyan" },
+                        { label: "Hyprland Issues", name: "Hyprland WM", icon: "󰊤", url: "hyprwm/Hyprland", mode: "all", color: "blue" },
+                        { label: "My Open PRs (@me)", name: "My GitHub PRs", icon: "󰊤", url: "@me", mode: "prs", color: "magenta" }
+                      ]
+                    : [
+                        { label: "Hacker News", name: "Hacker News", icon: "󰑫", url: "https://hnrss.org/frontpage?count=12", mode: "all", color: "orange" },
+                        { label: "Arch Linux News", name: "Arch Linux News", icon: "󰣇", url: "https://archlinux.org/feeds/news/", mode: "all", color: "blue" },
+                        { label: "Root.cz", name: "Root.cz Články", icon: "󰑫", url: "https://www.root.cz/rss/clanky/", mode: "all", color: "red" },
+                        { label: "Lobsters", name: "Lobste.rs", icon: "󰑫", url: "https://lobste.rs/rss", mode: "all", color: "yellow" }
+                      ]
+
+                  delegate: Button {
+                    required property var modelData
+                    text: modelData.label
+                    bordered: true
+                    selected: root.formCategoryFeedUrl === modelData.url && (root.formCategoryType !== "github" || root.formCategoryFeedMode === modelData.mode)
+                    onClicked: {
+                      root.formCategoryFeedUrl = modelData.url
+                      root.formCategoryFeedMode = modelData.mode
+                      if (!root.formCategoryName.trim()) root.formCategoryName = modelData.name
+                      root.formCategoryIcon = modelData.icon
+                      root.formCategoryColorRole = modelData.color
+                    }
+                  }
                 }
               }
             }
@@ -3204,6 +4260,8 @@ Item {
           color: root.background
           borderSpec: root.borderSpec
           padding: Style.space(22)
+
+          MouseArea { anchors.fill: parent }
 
           Column {
             id: shortcutCol
