@@ -11,6 +11,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.parse
 import urllib.request
@@ -19,6 +20,39 @@ import xml.etree.ElementTree as ET
 USER_AGENT = "Omarchy-Megamenu/1.1 (+https://github.com/Morganczech/omarchy-megamenu)"
 DEFAULT_TTL_SECONDS = 600  # 10 minutes
 MAX_ITEMS_PER_FEED = 12
+
+
+def ensure_private_dir(path: Path) -> None:
+    """Create (or harden) a user-only directory for local caches that may hold private titles."""
+    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        os.chmod(path, 0o700)
+    except OSError:
+        pass
+
+
+def write_private_text(path: Path, text: str) -> None:
+    """Atomically write text as a user-only (0600) regular file."""
+    ensure_private_dir(path.parent)
+    fd, tmp_name = tempfile.mkstemp(prefix=".feeds-cache-", suffix=".tmp", dir=path.parent)
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            os.fchmod(stream.fileno(), 0o600)
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(tmp_path, path)
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
+    finally:
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
 
 
 def clean_text(val):
@@ -385,6 +419,14 @@ def main():
         if arg.startswith("--category="):
             only_cat_id = arg.split("=", 1)[1].strip()
 
+    # Harden layout even when cache is only read (existing installs may be 0755/0644).
+    ensure_private_dir(cache_path.parent)
+    if cache_path.exists():
+        try:
+            os.chmod(cache_path, 0o600)
+        except OSError:
+            pass
+
     cache = {"feeds": {}}
     if cache_path.exists():
         try:
@@ -450,8 +492,10 @@ def main():
                     }
 
         try:
-            cache_path.parent.mkdir(parents=True, exist_ok=True)
-            cache_path.write_text(json.dumps(cache, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            write_private_text(
+                cache_path,
+                json.dumps(cache, ensure_ascii=False, indent=2) + "\n",
+            )
         except Exception:
             pass
 

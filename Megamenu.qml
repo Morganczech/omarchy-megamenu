@@ -1035,7 +1035,8 @@ Item {
   // Processes & File IO
   Process {
     id: mkdirProc
-    command: ["mkdir", "-p", root.dataDir, root.faviconsDir]
+    // 0700 so feeds-cache.json (may contain private GitHub @me titles) is not world-traversable
+    command: ["bash", "-c", "mkdir -p -- \"$1\" \"$2\" && chmod 700 -- \"$1\" \"$2\"", "megamenu-mkdir", root.dataDir, root.faviconsDir]
     running: false
     onExited: {
       root.dirReady = true

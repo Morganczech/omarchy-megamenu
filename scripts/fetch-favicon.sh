@@ -4,7 +4,8 @@ set -euo pipefail
 CACHE_DIR="${1:-$HOME/.local/share/omarchy-megamenu/favicons}"
 shift || true
 
-mkdir -p "$CACHE_DIR"
+mkdir -p -m 700 "$CACHE_DIR"
+chmod 700 "$CACHE_DIR" 2>/dev/null || true
 
 fetch_one() {
   local raw="$1"
