@@ -1,5 +1,57 @@
 // Storage.js - Pure data model, validation, CRUD, filtering, and default seed data for Omarchy Megamenu
 
+// Strip markup so Qt Text (default AutoText) never treats saved titles as rich HTML.
+function plainTextLabel(value) {
+  var s = String(value || "")
+  s = s.replace(/&nbsp;/gi, " ")
+  s = s.replace(/&lt;/gi, "<")
+  s = s.replace(/&gt;/gi, ">")
+  s = s.replace(/&quot;/gi, "\"")
+  s = s.replace(/&#39;/g, "'")
+  s = s.replace(/&amp;/gi, "&")
+  s = s.replace(/&#(\d+);/g, function(_, n) {
+    var code = parseInt(n, 10)
+    return (isFinite(code) && code > 0) ? String.fromCharCode(code) : ""
+  })
+  s = s.replace(/<[^>]*>/g, " ")
+  s = s.replace(/\s+/g, " ").trim()
+  return s
+}
+
+function sanitizeLiveFeedsMap(feeds) {
+  if (!feeds || typeof feeds !== "object") return {}
+  var out = {}
+  var keys = Object.keys(feeds)
+  for (var i = 0; i < keys.length; i++) {
+    var key = keys[i]
+    var feed = feeds[key]
+    if (!feed || typeof feed !== "object") {
+      out[key] = feed
+      continue
+    }
+    var items = Array.isArray(feed.items) ? feed.items : []
+    var cleanItems = []
+    for (var j = 0; j < items.length; j++) {
+      var it = items[j]
+      if (!it || typeof it !== "object") continue
+      var copy = {}
+      for (var prop in it) {
+        if (Object.prototype.hasOwnProperty.call(it, prop)) copy[prop] = it[prop]
+      }
+      copy.title = plainTextLabel(copy.title)
+      copy.subtitle = plainTextLabel(copy.subtitle)
+      copy.badgeText = plainTextLabel(copy.badgeText)
+      cleanItems.push(copy)
+    }
+    out[key] = {
+      items: cleanItems,
+      updatedAt: feed.updatedAt,
+      error: feed.error
+    }
+  }
+  return out
+}
+
 function extractDomain(url) {
   var s = String(url || "").trim()
   if (!s) return ""
@@ -378,12 +430,12 @@ function defaultData() {
 function sanitizeItem(raw, fallbackSpaceId, fallbackCategoryId) {
   if (!raw || typeof raw !== "object") return null
   var type = raw.type === "app" ? "app" : "url"
-  var title = String(raw.title || "").trim()
+  var title = plainTextLabel(raw.title)
   if (!title) return null
   var url = type === "url" ? normalizeUrl(raw.url || "") : ""
   var desktopId = type === "app" ? String(raw.desktopId || "").trim() : ""
   var domain = extractDomain(url)
-  var subtitle = String(raw.subtitle || "").trim()
+  var subtitle = plainTextLabel(raw.subtitle)
   if (!subtitle) {
     subtitle = type === "url" ? domain : desktopId
   }
@@ -403,7 +455,7 @@ function sanitizeItem(raw, fallbackSpaceId, fallbackCategoryId) {
     iconValue: String(raw.iconValue || ""),
     favorite: raw.favorite === true,
     pinnedSlot: Math.round(pinned),
-    badgeText: String(raw.badgeText || ""),
+    badgeText: plainTextLabel(raw.badgeText),
     colorRole: String(raw.colorRole !== undefined && raw.colorRole !== null ? raw.colorRole : "")
   }
 }
@@ -426,9 +478,11 @@ function parse(rawText) {
     var sp = parsed.spaces[i]
     if (!sp || !sp.id || !sp.name) continue
     var sid = String(sp.id)
+    var spName = plainTextLabel(sp.name)
+    if (!spName) continue
     spaces.push({
       id: sid,
-      name: String(sp.name),
+      name: spName,
       icon: String(sp.icon || "󰀻")
     })
     spaceIds[sid] = true
@@ -450,10 +504,12 @@ function parse(rawText) {
     var catType = (rawType === "rss" || rawType === "github") ? rawType : "static"
     var rawMode = String(c.feedMode || "all").toLowerCase()
     var feedMode = (rawMode === "issues" || rawMode === "prs" || rawMode === "releases") ? rawMode : "all"
+    var catName = plainTextLabel(c.name)
+    if (!catName) continue
     categories.push({
       id: cid,
       spaceId: cSpace,
-      name: String(c.name),
+      name: catName,
       icon: String(c.icon || "󰉋"),
       colorRole: String(c.colorRole || "blue"),
       type: catType,
@@ -837,7 +893,7 @@ function toggleFavorite(data, itemId) {
 
 function upsertCategory(data, catPayload) {
   var next = cloneData(data)
-  var name = String((catPayload && catPayload.name) || "").trim()
+  var name = plainTextLabel((catPayload && catPayload.name) || "")
   if (!name) return next
   var id = String((catPayload && catPayload.id) || uid("cat"))
   var spaceId = String((catPayload && catPayload.spaceId) || next.activeSpaceId)
@@ -896,7 +952,7 @@ function deleteCategory(data, categoryId) {
 
 function upsertSpace(data, spacePayload) {
   var next = cloneData(data)
-  var name = String((spacePayload && spacePayload.name) || "").trim()
+  var name = plainTextLabel((spacePayload && spacePayload.name) || "")
   if (!name) return next
   var id = String((spacePayload && spacePayload.id) || uid("space"))
   var icon = String((spacePayload && spacePayload.icon) || "󰀻")
@@ -956,7 +1012,7 @@ function mergeImportedFolders(data, targetSpaceId, folders) {
   for (var f = 0; f < folders.length; f++) {
     var folder = folders[f]
     if (!folder || !Array.isArray(folder.bookmarks) || folder.bookmarks.length === 0) continue
-    var folderName = String(folder.name || "Imported").trim()
+    var folderName = plainTextLabel(folder.name || "Imported") || "Imported"
     var catId = ""
     for (var c = 0; c < next.categories.length; c++) {
       if (next.categories[c].spaceId === spaceId && next.categories[c].name.toLowerCase() === folderName.toLowerCase()) {
@@ -986,7 +1042,7 @@ function mergeImportedFolders(data, targetSpaceId, folders) {
         spaceId: spaceId,
         categoryId: catId,
         type: "url",
-        title: bm.title || extractDomain(normUrl) || normUrl,
+        title: plainTextLabel(bm.title) || extractDomain(normUrl) || normUrl,
         subtitle: extractDomain(normUrl),
         url: normUrl,
         iconType: "favicon",
@@ -1001,6 +1057,8 @@ function mergeImportedFolders(data, targetSpaceId, folders) {
 
 if (typeof module !== "undefined") {
   module.exports = {
+    plainTextLabel: plainTextLabel,
+    sanitizeLiveFeedsMap: sanitizeLiveFeedsMap,
     extractDomain: extractDomain,
     monogramFor: monogramFor,
     normalizeUrl: normalizeUrl,

@@ -12,13 +12,25 @@ Usage:
 """
 
 import glob
+import html
 import html.parser
 import json
 import os
+import re
 import shutil
 import sqlite3
 import sys
 import tempfile
+
+_TAG_RE = re.compile(r"<[^>]*>")
+
+
+def plain_title(value, fallback=""):
+    """Strip HTML/markup from bookmark titles before they reach the QML UI."""
+    text = html.unescape(str(value or ""))
+    text = _TAG_RE.sub(" ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text or fallback
 
 
 def parse_chromium_bookmarks(path):
@@ -40,16 +52,16 @@ def parse_chromium_bookmarks(path):
             ctype = child.get("type")
             if ctype == "url":
                 url = (child.get("url") or "").strip()
-                title = (child.get("name") or "").strip()
+                title = plain_title(child.get("name"), url)
                 if url and url.startswith(("http://", "https://")):
                     direct_bookmarks.append({"title": title or url, "url": url})
             elif ctype == "folder":
-                sub_name = (child.get("name") or "Folder").strip()
+                sub_name = plain_title(child.get("name"), "Folder")
                 walk_folder(child, sub_name)
 
         if direct_bookmarks:
             folders.append({
-                "name": folder_name or "Bookmarks",
+                "name": plain_title(folder_name, "Bookmarks"),
                 "count": len(direct_bookmarks),
                 "bookmarks": direct_bookmarks,
             })
@@ -61,7 +73,7 @@ def parse_chromium_bookmarks(path):
     ]:
         root_node = roots.get(root_key)
         if isinstance(root_node, dict):
-            walk_folder(root_node, root_node.get("name") or default_label)
+            walk_folder(root_node, plain_title(root_node.get("name"), default_label))
 
     return folders
 
@@ -77,7 +89,7 @@ def parse_firefox_places(sqlite_path):
         cur = conn.cursor()
 
         cur.execute("SELECT id, title FROM moz_bookmarks WHERE type = 2")
-        folder_titles = {row[0]: (row[1] or "Bookmarks") for row in cur.fetchall()}
+        folder_titles = {row[0]: plain_title(row[1], "Bookmarks") for row in cur.fetchall()}
 
         cur.execute(
             """
@@ -99,7 +111,7 @@ def parse_firefox_places(sqlite_path):
                     "mobile": "Mobile Bookmarks",
                 }.get(fname, "Bookmarks")
             grouped.setdefault(fname, []).append({
-                "title": (title or url).strip(),
+                "title": plain_title(title, url.strip()),
                 "url": url.strip(),
             })
         conn.close()
@@ -108,7 +120,7 @@ def parse_firefox_places(sqlite_path):
         for fname, bms in grouped.items():
             if bms:
                 folders.append({
-                    "name": fname,
+                    "name": plain_title(fname, "Bookmarks"),
                     "count": len(bms),
                     "bookmarks": bms,
                 })
@@ -151,14 +163,14 @@ class NetscapeBookmarkParser(html.parser.HTMLParser):
         t = tag.lower()
         if t == "h3" and self.in_h3:
             self.in_h3 = False
-            name = "".join(self.text_buf).strip() or "Bookmarks"
+            name = plain_title("".join(self.text_buf), "Bookmarks")
             self.last_h3 = name
         elif t == "dl":
             if len(self.folder_stack) > 1:
                 self.folder_stack.pop()
         elif t == "a" and self.in_a:
             self.in_a = False
-            title = "".join(self.text_buf).strip() or self.current_href
+            title = plain_title("".join(self.text_buf), self.current_href)
             folder = self.folder_stack[-1] if self.folder_stack else "Imported Bookmarks"
             self.folders_map.setdefault(folder, []).append({
                 "title": title,
@@ -180,7 +192,7 @@ def parse_html_bookmarks(path):
         for fname, bms in parser.folders_map.items():
             if bms:
                 folders.append({
-                    "name": fname,
+                    "name": plain_title(fname, "Imported Bookmarks"),
                     "count": len(bms),
                     "bookmarks": bms,
                 })

@@ -1126,7 +1126,7 @@ Item {
       try {
         var parsed = JSON.parse(feedsCacheFile.text() || "{}")
         if (parsed && typeof parsed.feeds === "object") {
-          root.liveFeedsMap = parsed.feeds
+          root.liveFeedsMap = Storage.sanitizeLiveFeedsMap(parsed.feeds)
           root.ensureSelectedValid()
           root.queueMissingFavicons()
         }
@@ -1149,7 +1149,7 @@ Item {
       try {
         var parsed = JSON.parse(raw)
         if (parsed && typeof parsed.feeds === "object") {
-          root.liveFeedsMap = parsed.feeds
+          root.liveFeedsMap = Storage.sanitizeLiveFeedsMap(parsed.feeds)
           root.ensureSelectedValid()
           root.queueMissingFavicons()
           if (liveFeedFetchProc.wasExplicitRefresh) {
@@ -1530,6 +1530,7 @@ Item {
                     Text {
                       width: Math.min(implicitWidth, Style.space(115))
                       elide: Text.ElideRight
+                      textFormat: Text.PlainText
                       text: modelData.name
                       color: isCurrent ? root.foreground : Color.muted
                       font.family: root.fontFamily
@@ -1944,6 +1945,7 @@ Item {
                     Text {
                       width: Math.min(implicitWidth, Style.space(160))
                       elide: Text.ElideRight
+                      textFormat: Text.PlainText
                       text: modelData.name
                       color: catPillRect.active ? root.foreground : Color.muted
                       font.family: root.fontFamily
@@ -2073,6 +2075,7 @@ Item {
                       Text {
                         width: parent.width
                         elide: Text.ElideRight
+                        textFormat: Text.PlainText
                         text: orbitItem ? orbitItem.title : ""
                         color: root.foreground
                         font.family: root.fontFamily
@@ -2083,6 +2086,7 @@ Item {
                       Text {
                         width: parent.width
                         elide: Text.ElideRight
+                        textFormat: Text.PlainText
                         text: orbitItem ? (Storage.extractDomain(orbitItem.url) || orbitItem.subtitle) : ""
                         color: Color.muted
                         font.family: root.fontFamily
@@ -2122,6 +2126,7 @@ Item {
                       anchors.verticalCenter: parent.verticalCenter
                       width: parent.width - Style.space(65)
                       elide: Text.ElideRight
+                      textFormat: Text.PlainText
                       text: orbitItem ? orbitItem.subtitle : ""
                       color: Color.muted
                       font.family: root.fontFamily
@@ -2142,6 +2147,7 @@ Item {
                       Text {
                         id: badgeTxt
                         anchors.centerIn: parent
+                        textFormat: Text.PlainText
                         text: orbitItem ? orbitItem.badgeText : ""
                         color: orbitAccent
                         font.family: root.fontFamily
@@ -2346,6 +2352,7 @@ Item {
                               )
                             )
                             elide: Text.ElideRight
+                            textFormat: Text.PlainText
                             text: modelData.name
                             color: root.foreground
                             font.family: root.fontFamily
@@ -2540,6 +2547,7 @@ Item {
                               wrapMode: itemRowRect.isLiveEntry ? Text.Wrap : Text.NoWrap
                               maximumLineCount: itemRowRect.isLiveEntry ? 2 : 1
                               elide: Text.ElideRight
+                              textFormat: Text.PlainText
                               text: modelData.title
                               color: (itemRowRect.isHovered || itemRowRect.isSelected) ? itemRowRect.rowAccent : root.foreground
                               font.family: root.fontFamily
@@ -2563,6 +2571,7 @@ Item {
                                 Text {
                                   id: appTagText
                                   anchors.centerIn: parent
+                                  textFormat: Text.PlainText
                                   text: String(modelData.badgeText || (modelData.type === "app" ? "APP" : ""))
                                   color: itemRowRect.rowAccent
                                   font.family: root.fontFamily
@@ -2578,6 +2587,7 @@ Item {
                                 )
                                 elide: Text.ElideRight
                                 anchors.verticalCenter: parent.verticalCenter
+                                textFormat: Text.PlainText
                                 text: modelData.subtitle || Storage.extractDomain(modelData.url)
                                 color: Color.muted
                                 font.family: root.fontFamily
@@ -2791,6 +2801,7 @@ Item {
                         Text {
                           width: parent.width
                           elide: Text.ElideRight
+                          textFormat: Text.PlainText
                           text: appName
                           color: root.foreground
                           font.family: root.fontFamily
@@ -2801,6 +2812,7 @@ Item {
                         Text {
                           width: parent.width
                           elide: Text.ElideRight
+                          textFormat: Text.PlainText
                           text: appSub || modelData.id
                           color: Color.muted
                           font.family: root.fontFamily
@@ -2883,6 +2895,7 @@ Item {
               }
 
               Text {
+                textFormat: Text.PlainText
                 text: root.statusBannerText !== ""
                   ? root.statusBannerText
                   : (root.tr("footerActiveSpace") + ": " + root.activeSpaceId.toUpperCase()
@@ -3269,6 +3282,7 @@ Item {
                 Text {
                   width: Style.space(155)
                   elide: Text.ElideRight
+                  textFormat: Text.PlainText
                   text: modelData.name
                   color: isCurrent
                     ? root.foreground
@@ -4201,6 +4215,7 @@ Item {
                     }
 
                     Text {
+                      textFormat: Text.PlainText
                       text: "󰉋  " + modelData.name
                       color: root.foreground
                       font.family: root.fontFamily
