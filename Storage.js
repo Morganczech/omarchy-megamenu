@@ -109,7 +109,7 @@ function defaultData() {
       { id: "cat-work-comm", spaceId: "work-core", name: "Communication", icon: "󰇮", colorRole: "green", type: "static", feedUrl: "", feedMode: "all" },
       // Live Pulse categories (RSS + GitHub Feeds) - 2 wide columns by default for full title readability
       { id: "cat-live-omarchy", spaceId: "live-pulse", name: "Omarchy PRs & Issues", icon: "󰊤", colorRole: "green", type: "github", feedUrl: "basecamp/omarchy", feedMode: "all" },
-      { id: "cat-live-hn", spaceId: "live-pulse", name: "Hacker News", icon: "󰑫", colorRole: "orange", type: "rss", feedUrl: "https://hnrss.org/frontpage?count=12", feedMode: "all" }
+      { id: "cat-live-hn", spaceId: "live-pulse", name: "Hacker News", icon: "󰑫", colorRole: "orange", type: "rss", feedUrl: "https://hnrss.org/frontpage?count=48", feedMode: "all" }
     ],
     items: [
       // Dev Matrix - Quick Orbit [1-6] + Categories

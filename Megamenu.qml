@@ -113,6 +113,8 @@ Item {
   // Live Feeds state
   property var liveFeedsMap: ({})
   property bool fetchingLiveFeeds: false
+  readonly property int livePageSize: 12
+  property var liveVisibleLimits: ({})
 
   // Edit Space Modal fields
   property string formSpaceId: ""
@@ -399,19 +401,68 @@ Item {
     root.refreshLiveFeeds(false, "")
   }
 
+  function itemsForCategory(catOrId) {
+    var catId = (catOrId && catOrId.id) ? catOrId.id : String(catOrId || "")
+    var cat = (catOrId && catOrId.id) ? catOrId : null
+    if ((cat && cat.type === "omarchy") || catId === "__omarchy_system__") {
+      return root.searchSystemColumnItems || []
+    }
+    var all = root.filteredFlatItems || []
+    var list = []
+    for (var i = 0; i < all.length; i++) {
+      if (all[i].categoryId === catId) list.push(all[i])
+    }
+    return list
+  }
+
+  function liveVisibleLimit(catId) {
+    var limits = root.liveVisibleLimits || {}
+    var n = Number(limits[catId] || 0)
+    if (!isFinite(n) || n < root.livePageSize) return root.livePageSize
+    return n
+  }
+
+  function loadMoreLive(catId) {
+    if (!catId) return
+    var full = root.itemsForCategory(catId)
+    var current = root.liveVisibleLimit(catId)
+    var limits = root.liveVisibleLimits || {}
+    var next = {}
+    var keys = Object.keys(limits)
+    for (var i = 0; i < keys.length; i++) next[keys[i]] = limits[keys[i]]
+    next[catId] = current + root.livePageSize
+    root.liveVisibleLimits = next
+    if (full.length > current && full[current] && full[current].id) {
+      root.selectedItemId = full[current].id
+    }
+  }
+
+  function visibleColumnItems(cat) {
+    var list = root.itemsForCategory(cat)
+    if (!cat) return list
+    var isLive = cat.type === "rss" || cat.type === "github"
+    if (!isLive || String(root.searchQuery || "").trim().length > 0) return list
+    var limit = root.liveVisibleLimit(cat.id)
+    if (list.length <= limit) return list
+    var out = list.slice(0, limit)
+    out.push({
+      id: "__loadmore__" + cat.id,
+      isLoadMore: true,
+      categoryId: cat.id,
+      title: root.tr("liveLoadMore")
+    })
+    return out
+  }
+
   function buildVisibleCategoryColumns() {
     var cats = root.currentCategories || []
-    var all = root.filteredFlatItems || []
     var cols = []
     for (var c = 0; c < cats.length; c++) {
       var cat = cats[c]
       if (root.activeFilter !== "all" && root.activeFilter !== "favorites" && cat.id !== root.activeFilter) {
         continue
       }
-      var colItems = []
-      for (var i = 0; i < all.length; i++) {
-        if (all[i].categoryId === cat.id) colItems.push(all[i])
-      }
+      var colItems = root.visibleColumnItems(cat)
       if (colItems.length > 0) {
         cols.push({ category: cat, items: colItems })
       }
@@ -1075,6 +1126,12 @@ Item {
         var idx = Math.max(0, Math.min(root.selectedAppIndex, root.matchedSystemApps.length - 1))
         var sysApp = root.matchedSystemApps[idx]
         root.launchSystemSearchEntry(sysApp)
+        event.accepted = true
+        return
+      }
+      var selId = String(root.selectedItemId || "")
+      if (selId.indexOf("__loadmore__") === 0) {
+        root.loadMoreLive(selId.substring("__loadmore__".length))
         event.accepted = true
         return
       }
@@ -2349,15 +2406,8 @@ Item {
                   readonly property bool isLiveCat: modelData.type === "rss" || modelData.type === "github"
                   readonly property bool isOmarchyCat: modelData.type === "omarchy"
                   readonly property color catAccent: root.roleColor(modelData.colorRole)
-                  readonly property var columnItems: {
-                    if (isOmarchyCat) return root.searchSystemColumnItems
-                    var all = root.filteredFlatItems
-                    var list = []
-                    for (var i = 0; i < all.length; i++) {
-                      if (all[i].categoryId === modelData.id) list.push(all[i])
-                    }
-                    return list
-                  }
+                  readonly property var columnSourceItems: root.itemsForCategory(modelData)
+                  readonly property var columnItems: root.visibleColumnItems(modelData)
 
                   readonly property int visibleColCount: Math.min(
                     categoriesRow.maxVisibleCols,
@@ -2483,7 +2533,7 @@ Item {
                           Text {
                             id: countLabel
                             anchors.centerIn: parent
-                            text: I18n.formatItemsCount(root.activeLang, catColumnCard.columnItems.length)
+                            text: I18n.formatItemsCount(root.activeLang, catColumnCard.columnSourceItems.length)
                             color: catColumnCard.catAccent
                             font.family: root.fontFamily
                             font.pixelSize: Style.font.caption
@@ -2577,15 +2627,18 @@ Item {
                       delegate: Rectangle {
                         id: itemRowRect
                         required property var modelData
+                        readonly property bool isLoadMore: modelData.isLoadMore === true
                         readonly property bool isSelected: root.selectedItemId === modelData.id
                         readonly property bool isHovered: rowMouse.containsMouse
                         readonly property color rowAccent: root.itemAccentColor(modelData, catColumnCard.modelData.colorRole)
                         readonly property bool isLiveEntry: modelData.isLiveItem === true
 
                         width: catListView.width
-                        height: isLiveEntry
-                          ? Math.max(Style.space(58), itemTextCol.implicitHeight + Style.space(18))
-                          : Style.space(52)
+                        height: isLoadMore
+                          ? Style.space(40)
+                          : (isLiveEntry
+                            ? Math.max(Style.space(58), itemTextCol.implicitHeight + Style.space(18))
+                            : Style.space(52))
                         radius: Style.cornerRadius > 0 ? Math.max(5, Style.cornerRadius - 1) : 5
                         color: (isHovered || isSelected)
                           ? Util.alpha(rowAccent, 0.16)
@@ -2595,7 +2648,18 @@ Item {
                           ? Util.alpha(rowAccent, 0.6)
                           : "transparent"
 
+                        Text {
+                          visible: itemRowRect.isLoadMore
+                          anchors.centerIn: parent
+                          text: modelData.title || root.tr("liveLoadMore")
+                          color: (itemRowRect.isHovered || itemRowRect.isSelected) ? itemRowRect.rowAccent : root.foreground
+                          font.family: root.fontFamily
+                          font.pixelSize: Style.font.bodySmall
+                          font.bold: true
+                        }
+
                         Row {
+                          visible: !itemRowRect.isLoadMore
                           anchors.fill: parent
                           anchors.leftMargin: Style.space(8)
                           anchors.rightMargin: Style.space(8)
@@ -2674,13 +2738,17 @@ Item {
                         MouseArea {
                           id: rowMouse
                           anchors.fill: parent
-                          anchors.rightMargin: rowRightActions.width + Style.space(10)
+                          anchors.rightMargin: itemRowRect.isLoadMore ? 0 : (rowRightActions.width + Style.space(10))
                           hoverEnabled: true
                           cursorShape: Qt.PointingHandCursor
-                          acceptedButtons: Qt.LeftButton | Qt.RightButton
+                          acceptedButtons: itemRowRect.isLoadMore ? Qt.LeftButton : (Qt.LeftButton | Qt.RightButton)
                           onEntered: root.selectedItemId = modelData.id
                           onClicked: function(mouse) {
                             root.selectedItemId = modelData.id
+                            if (modelData.isLoadMore === true) {
+                              root.loadMoreLive(modelData.categoryId)
+                              return
+                            }
                             if (mouse.button === Qt.RightButton) {
                               var pos = rowMouse.mapToItem(card, mouse.x, mouse.y)
                               root.openContextMenuFor(modelData, pos.x, pos.y)
@@ -2693,6 +2761,7 @@ Item {
                         // Right Action Icons (Favorite Star + ⋮ Context Menu button)
                         Row {
                           id: rowRightActions
+                          visible: !itemRowRect.isLoadMore
                           anchors.right: parent.right
                           anchors.rightMargin: Style.space(6)
                           anchors.verticalCenter: parent.verticalCenter
@@ -4059,7 +4128,7 @@ Item {
                         { label: "My Open PRs (@me)", name: "My GitHub PRs", icon: "󰊤", url: "@me", mode: "prs", color: "magenta" }
                       ]
                     : [
-                        { label: "Hacker News", name: "Hacker News", icon: "󰑫", url: "https://hnrss.org/frontpage?count=12", mode: "all", color: "orange" },
+                        { label: "Hacker News", name: "Hacker News", icon: "󰑫", url: "https://hnrss.org/frontpage?count=48", mode: "all", color: "orange" },
                         { label: "Arch Linux News", name: "Arch Linux News", icon: "󰣇", url: "https://archlinux.org/feeds/news/", mode: "all", color: "blue" },
                         { label: "Root.cz", name: "Root.cz Články", icon: "󰑫", url: "https://www.root.cz/rss/clanky/", mode: "all", color: "red" },
                         { label: "Lobsters", name: "Lobste.rs", icon: "󰑫", url: "https://lobste.rs/rss", mode: "all", color: "yellow" }

@@ -19,7 +19,8 @@ import xml.etree.ElementTree as ET
 
 USER_AGENT = "Omarchy-Megamenu/1.1 (+https://github.com/Morganczech/omarchy-megamenu)"
 DEFAULT_TTL_SECONDS = 600  # 10 minutes
-MAX_ITEMS_PER_FEED = 12
+MAX_ITEMS_PER_FEED = 48
+GITHUB_ISSUES_PAGE_SIZE = 100
 
 
 def ensure_private_dir(path: Path) -> None:
@@ -341,8 +342,10 @@ def fetch_github_category(cat):
                 )
         return out
 
-    # Issues & PRs via /repos/{owner}/{repo}/issues
-    api_url = f"https://api.github.com/repos/{repo}/issues?state=open&per_page=25"
+    # Issues & PRs via /repos/{owner}/{repo}/issues.
+    # Page size stays above the cache cap so an issues-only or PRs-only filter
+    # still has enough rows after the other kind is dropped.
+    api_url = f"https://api.github.com/repos/{repo}/issues?state=open&per_page={GITHUB_ISSUES_PAGE_SIZE}"
     raw_json = http_get(api_url, accept="application/vnd.github+json")
     data = json.loads(raw_json)
     out = []
@@ -385,6 +388,32 @@ def fetch_github_category(cat):
     return out
 
 
+def bump_feed_count(feed_url: str, minimum: int) -> str:
+    """Raise an explicit count= query param up to the cache cap.
+
+    Feeds such as hnrss.org stop at count=12 before the parser ever sees them.
+    URLs without the parameter are left alone.
+    """
+    parts = urllib.parse.urlsplit(feed_url)
+    pairs = urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
+    changed = False
+    updated = []
+    for key, value in pairs:
+        if key.lower() == "count":
+            try:
+                current = int(str(value).strip() or "0")
+            except ValueError:
+                current = 0
+            if current < minimum:
+                value = str(minimum)
+                changed = True
+        updated.append((key, value))
+    if not changed:
+        return feed_url
+    query = urllib.parse.urlencode(updated)
+    return urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path, query, parts.fragment))
+
+
 def fetch_single_category(cat):
     cat_id = str(cat.get("id") or "")
     space_id = str(cat.get("spaceId") or "")
@@ -395,6 +424,7 @@ def fetch_single_category(cat):
     if cat_type == "rss" and feed_url:
         if not re.match(r"^https?://", feed_url, flags=re.I):
             feed_url = "https://" + feed_url
+        feed_url = bump_feed_count(feed_url, MAX_ITEMS_PER_FEED)
         xml_text = http_get(feed_url)
         items = parse_rss_or_atom(xml_text, feed_url, cat_id, space_id, color_role)
         return cat_id, {"items": items, "updatedAt": int(time.time()), "error": ""}
