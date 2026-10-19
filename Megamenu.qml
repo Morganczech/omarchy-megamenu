@@ -84,11 +84,14 @@ Item {
 
   // Edit Item Modal fields
   property string formItemId: ""
-  property string formItemType: "url" // "url" | "app"
+  property string formItemType: "url" // "url" | "app" | "command"
   property string formItemTitle: ""
   property string formItemSubtitle: ""
   property string formItemUrl: ""
   property string formItemDesktopId: ""
+  property string formItemCommand: ""
+  property string formItemCwd: ""
+  property string formItemRunMode: "terminal" // "terminal" | "background"
   property string formItemCategoryId: ""
   property string formItemIconType: "favicon" // "favicon" | "glyph" | "system" | "monogram"
   property string formItemIconValue: ""
@@ -146,12 +149,34 @@ Item {
   readonly property var matchedSystemApps: {
     if (!root.isCommandMode) return []
     var q = root.searchQuery.trim().slice(1).trim()
+    var commandMatches = Storage.searchCommandItems(root.data, q, 20)
+    var commandRows = []
+    var spaces = (root.data && root.data.spaces) ? root.data.spaces : []
+    for (var c = 0; c < commandMatches.length; c++) {
+      var cmd = commandMatches[c]
+      var spaceLabel = ""
+      for (var s = 0; s < spaces.length; s++) {
+        if (spaces[s].id === cmd.spaceId) {
+          spaceLabel = spaces[s].name || ""
+          break
+        }
+      }
+      var cmdLabel = cmd.subtitle || cmd.command || ""
+      commandRows.push({
+        id: cmd.id,
+        name: cmd.title,
+        subtext: spaceLabel ? (spaceLabel + "  •  " + cmdLabel) : cmdLabel,
+        entryKind: "command",
+        icon: cmd.iconValue || "󰆍",
+        commandItem: cmd
+      })
+    }
     var omarchyMatches = Storage.searchOmarchyMenuEntries(root.omarchyMenuEntries, q, 25)
     var values = (DesktopEntries && DesktopEntries.applications && DesktopEntries.applications.values)
       ? DesktopEntries.applications.values
       : []
     var appMatches = Storage.searchDesktopEntries(values, q, root.hiddenDesktopIds, 40)
-    return omarchyMatches.concat(appMatches)
+    return commandRows.concat(omarchyMatches).concat(appMatches)
   }
   readonly property var searchSystemColumnItems: {
     if (root.isCommandMode) return []
@@ -571,11 +596,43 @@ Item {
   }
 
   // Launch actions
+  function launchCommandItem(item) {
+    if (!item || item.type !== "command") return
+    var command = String(item.command || "").trim()
+    if (!command) return
+    var background = item.runMode === "background"
+    var script = Storage.commandShellScript(item, background ? "" : root.tr("commandDonePrompt"))
+    var title = String(item.title || "Megamenu").replace(/[\r\n]/g, " ")
+    if (background) {
+      Quickshell.execDetached(["setsid", "bash", "-lc", script])
+      return
+    }
+    Quickshell.execDetached([
+      "setsid", "uwsm-app", "--",
+      "xdg-terminal-exec",
+      "--app-id=org.omarchy.megamenu.command",
+      "--title=" + title,
+      "-e", "bash", "-lc", script
+    ])
+  }
+
+  function launchSystemSearchEntry(entry) {
+    if (!entry) return
+    if (entry.entryKind === "command" && entry.commandItem) {
+      root.launchItemDefault(entry.commandItem)
+      return
+    }
+    root.dismiss()
+    root.launchDesktopApp(entry.id, entry.name)
+  }
+
   function launchItemDefault(item) {
     if (!item) return
     root.dismiss()
     if (item.type === "app") {
       root.launchDesktopApp(item.desktopId, item.title)
+    } else if (item.type === "command") {
+      root.launchCommandItem(item)
     } else if (item.url) {
       Quickshell.execDetached(["xdg-open", item.url])
     }
@@ -589,7 +646,7 @@ Item {
 
   function copyItemUrl(item) {
     if (!item) return
-    var target = item.type === "url" ? item.url : item.desktopId
+    var target = item.type === "url" ? item.url : (item.type === "command" ? item.command : item.desktopId)
     if (!target) return
     Quickshell.execDetached(["wl-copy", target])
     root.contextMenuOpen = false
@@ -647,6 +704,9 @@ Item {
     root.formItemSubtitle = ""
     root.formItemUrl = "https://"
     root.formItemDesktopId = ""
+    root.formItemCommand = ""
+    root.formItemCwd = ""
+    root.formItemRunMode = "terminal"
     root.formItemCategoryId = defaultCat
     root.formItemIconType = "favicon"
     root.formItemIconValue = ""
@@ -671,11 +731,14 @@ Item {
     root.formItemSubtitle = item.subtitle || ""
     root.formItemUrl = item.url || ""
     root.formItemDesktopId = item.desktopId || ""
+    root.formItemCommand = item.command || ""
+    root.formItemCwd = item.cwd || ""
+    root.formItemRunMode = item.runMode === "background" ? "background" : "terminal"
     root.formItemCategoryId = item.categoryId || ""
     root.formItemIconValue = customIcon
     root.formItemIconType = (itType === "url")
       ? (customIcon.length > 0 ? "glyph" : "favicon")
-      : (item.iconType || "system")
+      : (itType === "command" ? "glyph" : (item.iconType || "system"))
     root.formItemBadgeText = item.badgeText || ""
     root.formItemColorRole = item.colorRole || ""
     root.formItemPinnedSlot = item.pinnedSlot || 0
@@ -691,10 +754,18 @@ Item {
       root.showStatus(root.tr("statusEnterItemTitle"))
       return
     }
+    if (root.formItemType === "command" && !root.formItemCommand.trim()) {
+      root.showStatus(root.tr("statusEnterCommand"))
+      return
+    }
     var trimmedIcon = root.formItemIconValue.trim()
-    var resolvedIconType = (root.formItemType === "url")
-      ? (trimmedIcon.length > 0 ? "glyph" : "favicon")
-      : "system"
+    var resolvedIconType = "system"
+    if (root.formItemType === "url") {
+      resolvedIconType = trimmedIcon.length > 0 ? "glyph" : "favicon"
+    } else if (root.formItemType === "command") {
+      resolvedIconType = "glyph"
+      if (!trimmedIcon) trimmedIcon = "󰆍"
+    }
     var payload = {
       id: root.formItemId || Storage.uid("item"),
       spaceId: root.activeSpaceId,
@@ -704,6 +775,9 @@ Item {
       subtitle: root.formItemSubtitle.trim(),
       url: root.formItemType === "url" ? root.formItemUrl.trim() : "",
       desktopId: root.formItemType === "app" ? root.formItemDesktopId.trim() : "",
+      command: root.formItemType === "command" ? root.formItemCommand.trim() : "",
+      cwd: root.formItemType === "command" ? root.formItemCwd.trim() : "",
+      runMode: root.formItemType === "command" && root.formItemRunMode === "background" ? "background" : "terminal",
       iconType: resolvedIconType,
       iconValue: trimmedIcon,
       badgeText: root.formItemBadgeText.trim(),
@@ -1000,8 +1074,7 @@ Item {
       if (root.isCommandMode && root.matchedSystemApps.length > 0) {
         var idx = Math.max(0, Math.min(root.selectedAppIndex, root.matchedSystemApps.length - 1))
         var sysApp = root.matchedSystemApps[idx]
-        root.dismiss()
-        root.launchDesktopApp(sysApp.id, sysApp.name)
+        root.launchSystemSearchEntry(sysApp)
         event.accepted = true
         return
       }
@@ -2561,7 +2634,7 @@ Item {
 
                               Rectangle {
                                 id: inlineItemTag
-                                visible: modelData.type === "app" || String(modelData.badgeText || "").length > 0
+                                visible: modelData.type === "app" || modelData.type === "command" || String(modelData.badgeText || "").length > 0
                                 height: Style.space(15)
                                 width: appTagText.implicitWidth + Style.space(8)
                                 radius: 3
@@ -2572,7 +2645,7 @@ Item {
                                   id: appTagText
                                   anchors.centerIn: parent
                                   textFormat: Text.PlainText
-                                  text: String(modelData.badgeText || (modelData.type === "app" ? "APP" : ""))
+                                  text: String(modelData.badgeText || (modelData.type === "app" ? "APP" : (modelData.type === "command" ? "CMD" : "")))
                                   color: itemRowRect.rowAccent
                                   font.family: root.fontFamily
                                   font.pixelSize: Style.font.caption - 2
@@ -2741,7 +2814,11 @@ Item {
                     readonly property string appName: modelData.name || modelData.id || ""
                     readonly property string appSub: modelData.subtext || modelData.id || ""
                     readonly property bool isOmarchyEntry: modelData.entryKind === "omarchy"
-                    readonly property color entryAccent: isOmarchyEntry ? root.roleColor("cyan") : root.roleColor("green")
+                    readonly property bool isCommandEntry: modelData.entryKind === "command"
+                    readonly property bool showGlyph: isOmarchyEntry || isCommandEntry
+                    readonly property color entryAccent: isCommandEntry
+                      ? root.roleColor("yellow")
+                      : (isOmarchyEntry ? root.roleColor("cyan") : root.roleColor("green"))
                     readonly property bool isSelected: index === root.selectedAppIndex
                     width: ListView.view.width
                     height: Style.space(46)
@@ -2768,23 +2845,23 @@ Item {
                         Image {
                           id: sysAppIconImg
                           anchors.fill: parent
-                          source: isOmarchyEntry ? "" : root.resolveAppIconSource(modelData.icon || "")
+                          source: showGlyph ? "" : root.resolveAppIconSource(modelData.icon || "")
                           smooth: true
-                          visible: !isOmarchyEntry && status === Image.Ready
+                          visible: !showGlyph && status === Image.Ready
                         }
 
                         Rectangle {
                           anchors.fill: parent
                           radius: 5
-                          visible: isOmarchyEntry || sysAppIconImg.status !== Image.Ready
+                          visible: showGlyph || sysAppIconImg.status !== Image.Ready
                           color: Util.alpha(entryAccent, 0.2)
                           border.width: 1
                           border.color: Util.alpha(entryAccent, 0.45)
 
                           Text {
                             anchors.centerIn: parent
-                            text: isOmarchyEntry
-                              ? (modelData.icon || "󱓞")
+                            text: showGlyph
+                              ? (modelData.icon || (isCommandEntry ? "󰆍" : "󱓞"))
                               : (appName.length > 0 ? appName.slice(0, 1).toUpperCase() : "A")
                             color: entryAccent
                             font.family: root.fontFamily
@@ -2795,7 +2872,7 @@ Item {
                       }
 
                       Column {
-                        width: parent.width - Style.space(180)
+                        width: parent.width - (isCommandEntry ? Style.space(40) : Style.space(180))
                         anchors.verticalCenter: parent.verticalCenter
 
                         Text {
@@ -2822,6 +2899,7 @@ Item {
 
                       Button {
                         anchors.verticalCenter: parent.verticalCenter
+                        visible: !isCommandEntry
                         text: root.tr("pinToCategoryBtn")
                         bordered: true
                         onClicked: {
@@ -2848,14 +2926,11 @@ Item {
                     MouseArea {
                       id: sysAppMouse
                       anchors.fill: parent
-                      anchors.rightMargin: Style.space(170)
+                      anchors.rightMargin: isCommandEntry ? 0 : Style.space(170)
                       hoverEnabled: true
                       cursorShape: Qt.PointingHandCursor
                       onEntered: root.selectedAppIndex = index
-                      onClicked: {
-                        root.dismiss()
-                        root.launchDesktopApp(modelData.id, appName)
-                      }
+                      onClicked: root.launchSystemSearchEntry(modelData)
                     }
                   }
                 }
@@ -3093,7 +3168,11 @@ Item {
               anchors.left: parent.left
               anchors.leftMargin: Style.space(8)
               anchors.verticalCenter: parent.verticalCenter
-              text: (root.contextMenuItem && root.contextMenuItem.type === "app") ? root.tr("ctxCopyDesktopId") : root.tr("ctxCopyUrl")
+              text: {
+                if (root.contextMenuItem && root.contextMenuItem.type === "app") return root.tr("ctxCopyDesktopId")
+                if (root.contextMenuItem && root.contextMenuItem.type === "command") return root.tr("ctxCopyCommand")
+                return root.tr("ctxCopyUrl")
+              }
               color: copyCtxMouse.containsMouse ? root.selectedText : root.foreground
               font.family: root.fontFamily
               font.pixelSize: Style.font.bodySmall
@@ -3417,7 +3496,7 @@ Item {
               font.bold: true
             }
 
-            // Type Toggle: Web Link vs Local App
+            // Type Toggle: Web Link, Local App, or Command
             Row {
               spacing: Style.space(8)
 
@@ -3426,8 +3505,9 @@ Item {
                 bordered: true
                 selected: root.formItemType === "url"
                 onClicked: {
+                  if (root.formItemIconValue.trim() === "󰆍") root.formItemIconValue = ""
                   root.formItemType = "url"
-                  root.formItemIconType = "favicon"
+                  root.formItemIconType = root.formItemIconValue.trim().length > 0 ? "glyph" : "favicon"
                 }
               }
 
@@ -3436,8 +3516,20 @@ Item {
                 bordered: true
                 selected: root.formItemType === "app"
                 onClicked: {
+                  if (root.formItemIconValue.trim() === "󰆍") root.formItemIconValue = ""
                   root.formItemType = "app"
                   root.formItemIconType = "system"
+                }
+              }
+
+              Button {
+                text: root.tr("typeCommand")
+                bordered: true
+                selected: root.formItemType === "command"
+                onClicked: {
+                  root.formItemType = "command"
+                  root.formItemIconType = "glyph"
+                  if (!root.formItemIconValue.trim()) root.formItemIconValue = "󰆍"
                 }
               }
             }
@@ -3556,6 +3648,55 @@ Item {
                   placeholderText: root.tr("fieldSubtitlePlaceholder")
                   text: root.formItemSubtitle
                   onTextChanged: root.formItemSubtitle = text
+                }
+              }
+            }
+
+            // Command fields (shown when type === "command")
+            Column {
+              width: parent.width
+              spacing: Style.space(6)
+              visible: root.formItemType === "command"
+
+              Column {
+                width: parent.width
+                spacing: 4
+                Text { text: root.tr("fieldCommand"); color: Color.muted; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
+                TextField {
+                  width: parent.width
+                  placeholderText: root.tr("fieldCommandPlaceholder")
+                  text: root.formItemCommand
+                  onTextChanged: root.formItemCommand = text
+                }
+              }
+
+              Column {
+                width: parent.width
+                spacing: 4
+                Text { text: root.tr("fieldCwd"); color: Color.muted; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
+                TextField {
+                  width: parent.width
+                  placeholderText: root.tr("fieldCwdPlaceholder")
+                  text: root.formItemCwd
+                  onTextChanged: root.formItemCwd = text
+                }
+              }
+
+              Row {
+                spacing: Style.space(8)
+
+                Button {
+                  text: root.tr("runModeTerminal")
+                  bordered: true
+                  selected: root.formItemRunMode !== "background"
+                  onClicked: root.formItemRunMode = "terminal"
+                }
+
+                Button {
+                  text: root.tr("runModeBackground")
+                  bordered: true
+                  selected: root.formItemRunMode === "background"
+                  onClicked: root.formItemRunMode = "background"
                 }
               }
             }

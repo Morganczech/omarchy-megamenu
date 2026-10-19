@@ -10,7 +10,7 @@ var STRINGS = {
   en: {
     // Top Header
     addItemBtn: "+ Item",
-    addItemTooltip: "Add web bookmark or local application (Ctrl+N)",
+    addItemTooltip: "Add web bookmark, command, or local application (Ctrl+N)",
     addCategoryBtn: "+ Category",
     addCategoryTooltip: "Create a new colored category",
     importBtn: "󰋺 Import",
@@ -34,7 +34,7 @@ var STRINGS = {
     statusShortcutError: "Shortcut error: ",
 
     // Search & Filters
-    searchPlaceholder: "Search bookmarks, Omarchy actions (theme, background...) or '>' for all...",
+    searchPlaceholder: "Search bookmarks, commands, Omarchy actions, or '>' for all...",
     filterAll: "All",
     filterFavorites: "★ Favorites",
     omarchyColumnName: "Omarchy & Apps",
@@ -50,9 +50,9 @@ var STRINGS = {
     itemsCountOne: "1 link",
     itemsCountFew: "{count} links",
     itemsCountMany: "{count} links",
-    systemAppsHeader: "󱓞 Omarchy System Actions & Installed Applications (Enter to run, '+' to pin into Megamenu)",
+    systemAppsHeader: "󱓞 Omarchy System Actions, Applications & Commands (Enter to run, '+' to pin into Megamenu)",
     pinToCategoryBtn: "+ Pin to category",
-    noAppsMatchedText: "No matching Omarchy actions or installed applications found.",
+    noAppsMatchedText: "No matching Omarchy actions, applications, or commands found.",
 
     // Footer & Status Messages
     footerActiveSpace: "ACTIVE SPACE",
@@ -61,6 +61,7 @@ var STRINGS = {
     footerShortcuts: "↑↓←→ Navigate   •   Tab Space   •   1-6 Orbit   •   Enter Launch   •   Right-click / Alt+M Actions   •   Alt+E Edit   •   Esc Close",
     statusCopied: "Copied to clipboard: ",
     statusEnterItemTitle: "Please enter an item title",
+    statusEnterCommand: "Enter a command",
     statusItemSaved: "Item saved: ",
     statusItemDeleted: "Item deleted: ",
     statusAppPinned: "App added to Megamenu: ",
@@ -80,6 +81,7 @@ var STRINGS = {
     ctxLaunchApp: "󰀻  Launch application",
     ctxCopyDesktopId: "󰆏  Copy Desktop ID",
     ctxCopyUrl: "󰆏  Copy URL",
+    ctxCopyCommand: "󰆏  Copy command",
     ctxEditItem: "󰏫  Edit bookmark",
     ctxDelete: "󰩺  Delete",
 
@@ -88,6 +90,14 @@ var STRINGS = {
     modalAddItemTitle: "Add new item",
     typeWebLink: "󰖟 Web Bookmark",
     typeLocalApp: "󰀻 Local Application",
+    typeCommand: "󰆍 Command",
+    fieldCommand: "Command",
+    fieldCommandPlaceholder: "e.g. restic-backup",
+    fieldCwd: "Working directory (optional)",
+    fieldCwdPlaceholder: "e.g. ~/Work/project",
+    runModeTerminal: "Terminal",
+    runModeBackground: "Background",
+    commandDonePrompt: "Done (exit %1) — press any key",
     pickInstalledAppLabel: "Choose installed application:",
     searchAppPlaceholder: "Search application (e.g. Ghostty, Cursor, Spotify)...",
     fieldTitle: "Title",
@@ -156,7 +166,7 @@ var STRINGS = {
   cs: {
     // Top Header
     addItemBtn: "+ Položka",
-    addItemTooltip: "Přidat odkaz nebo lokální aplikaci (Ctrl+N)",
+    addItemTooltip: "Přidat odkaz, příkaz nebo lokální aplikaci (Ctrl+N)",
     addCategoryBtn: "+ Kategorie",
     addCategoryTooltip: "Vytvořit novou barevnou kategorii",
     importBtn: "󰋺 Import",
@@ -180,7 +190,7 @@ var STRINGS = {
     statusShortcutError: "Chyba zkratky: ",
 
     // Search & Filters
-    searchPlaceholder: "Hledat odkazy, Omarchy akce (theme, background...) nebo '>' pro vše...",
+    searchPlaceholder: "Hledat odkazy, příkazy, Omarchy akce, nebo '>' pro vše...",
     filterAll: "Vše",
     filterFavorites: "★ Oblíbené",
     omarchyColumnName: "Omarchy & Aplikace",
@@ -196,9 +206,9 @@ var STRINGS = {
     itemsCountOne: "1 položka",
     itemsCountFew: "{count} položky",
     itemsCountMany: "{count} položek",
-    systemAppsHeader: "󱓞 Systémové akce Omarchy & Nainstalované aplikace (Enter pro spuštění, '+' pro připnutí)",
+    systemAppsHeader: "󱓞 Systémové akce Omarchy, aplikace a příkazy (Enter pro spuštění, '+' pro připnutí)",
     pinToCategoryBtn: "+ Připnout do kategorie",
-    noAppsMatchedText: "Žádné odpovídající akce Omarchy ani aplikace nebyly nalezeny.",
+    noAppsMatchedText: "Žádné odpovídající akce Omarchy, aplikace ani příkazy nebyly nalezeny.",
 
     // Footer & Status Messages
     footerActiveSpace: "AKTIVNÍ PROSTOR",
@@ -207,6 +217,7 @@ var STRINGS = {
     footerShortcuts: "↑↓←→ Navigace   •   Tab Prostor   •   1-6 Orbit   •   Enter Spustit   •   Pravý klik / Alt+M Akce   •   Alt+E Upravit   •   Esc Zavřít",
     statusCopied: "Zkopírováno do schránky: ",
     statusEnterItemTitle: "Zadej název položky",
+    statusEnterCommand: "Zadej příkaz",
     statusItemSaved: "Položka uložena: ",
     statusItemDeleted: "Položka smazána: ",
     statusAppPinned: "Aplikace přidána do Megamenu: ",
@@ -226,6 +237,7 @@ var STRINGS = {
     ctxLaunchApp: "󰀻  Spustit aplikaci",
     ctxCopyDesktopId: "󰆏  Kopírovat Desktop ID",
     ctxCopyUrl: "󰆏  Kopírovat URL",
+    ctxCopyCommand: "󰆏  Kopírovat příkaz",
     ctxEditItem: "󰏫  Upravit položku",
     ctxDelete: "󰩺  Smazat",
 
@@ -234,6 +246,14 @@ var STRINGS = {
     modalAddItemTitle: "Přidat novou položku",
     typeWebLink: "󰖟 Webový odkaz",
     typeLocalApp: "󰀻 Lokální aplikace",
+    typeCommand: "󰆍 Příkaz",
+    fieldCommand: "Příkaz",
+    fieldCommandPlaceholder: "např. restic-backup",
+    fieldCwd: "Pracovní adresář (volitelné)",
+    fieldCwdPlaceholder: "např. ~/Work/projekt",
+    runModeTerminal: "Terminál",
+    runModeBackground: "Na pozadí",
+    commandDonePrompt: "Hotovo (kód %1) — stiskni libovolnou klávesu",
     pickInstalledAppLabel: "Vybrat nainstalovanou aplikaci:",
     searchAppPlaceholder: "Hledat aplikaci (např. Ghostty, Cursor, Spotify)...",
     fieldTitle: "Název",

@@ -429,18 +429,37 @@ function defaultData() {
 
 function sanitizeItem(raw, fallbackSpaceId, fallbackCategoryId) {
   if (!raw || typeof raw !== "object") return null
-  var type = raw.type === "app" ? "app" : "url"
+  var type = raw.type === "app" ? "app" : (raw.type === "command" ? "command" : "url")
   var title = plainTextLabel(raw.title)
   if (!title) return null
   var url = type === "url" ? normalizeUrl(raw.url || "") : ""
   var desktopId = type === "app" ? String(raw.desktopId || "").trim() : ""
+  var command = type === "command" ? String(raw.command || "").trim() : ""
+  if (type === "command" && !command) return null
+  var cwd = type === "command" ? String(raw.cwd || "").trim() : ""
+  var runMode = ""
+  if (type === "command") {
+    runMode = String(raw.runMode || "").toLowerCase() === "background" ? "background" : "terminal"
+  }
   var domain = extractDomain(url)
   var subtitle = plainTextLabel(raw.subtitle)
   if (!subtitle) {
-    subtitle = type === "url" ? domain : desktopId
+    if (type === "url") subtitle = domain
+    else if (type === "command") subtitle = command
+    else subtitle = desktopId
   }
   var pinned = Number(raw.pinnedSlot || 0)
   if (!isFinite(pinned) || pinned < 0 || pinned > 6) pinned = 0
+
+  var iconType = String(raw.iconType || "")
+  if (!iconType) {
+    iconType = type === "app" ? "system" : (type === "command" ? "glyph" : "favicon")
+  }
+  var iconValue = String(raw.iconValue || "")
+  if (type === "command") {
+    if (iconType === "system" || iconType === "favicon") iconType = "glyph"
+    if (!iconValue) iconValue = "󰆍"
+  }
 
   return {
     id: String(raw.id || uid("item")),
@@ -451,8 +470,11 @@ function sanitizeItem(raw, fallbackSpaceId, fallbackCategoryId) {
     subtitle: subtitle,
     url: url,
     desktopId: desktopId,
-    iconType: String(raw.iconType || (type === "app" ? "system" : "favicon")),
-    iconValue: String(raw.iconValue || ""),
+    command: command,
+    cwd: cwd,
+    runMode: runMode,
+    iconType: iconType,
+    iconValue: iconValue,
     favorite: raw.favorite === true,
     pinnedSlot: Math.round(pinned),
     badgeText: plainTextLabel(raw.badgeText),
@@ -586,8 +608,66 @@ function matchesItemQuery(item, query) {
   if (String(item.subtitle || "").toLowerCase().indexOf(q) !== -1) return true
   if (String(item.url || "").toLowerCase().indexOf(q) !== -1) return true
   if (String(item.desktopId || "").toLowerCase().indexOf(q) !== -1) return true
+  if (String(item.command || "").toLowerCase().indexOf(q) !== -1) return true
+  if (String(item.cwd || "").toLowerCase().indexOf(q) !== -1) return true
   if (String(item.badgeText || "").toLowerCase().indexOf(q) !== -1) return true
   return false
+}
+
+function searchCommandItems(data, query, maxResults) {
+  var items = (data && Array.isArray(data.items)) ? data.items : []
+  var limit = (maxResults && maxResults > 0) ? maxResults : 20
+  var out = []
+  for (var i = 0; i < items.length; i++) {
+    var item = items[i]
+    if (!item || item.type !== "command") continue
+    if (!matchesItemQuery(item, query)) continue
+    out.push(item)
+    if (out.length >= limit) break
+  }
+  return out
+}
+
+function bashSingleQuote(value) {
+  return "'" + String(value == null ? "" : value).replace(/'/g, "'\\''") + "'"
+}
+
+function commandHoldPrintf(holdPrompt) {
+  var prompt = String(holdPrompt || "")
+  var parts = prompt.split("%1")
+  var before = parts.length > 0 ? parts[0] : ""
+  var after = parts.length > 1 ? parts.slice(1).join("%1") : ""
+  return "printf " + bashSingleQuote("%s%s%s") + " " + bashSingleQuote(before) + " \"$status\" " + bashSingleQuote(after)
+}
+
+function commandShellScript(item, holdPrompt) {
+  var command = String((item && item.command) || "").trim()
+  var cwd = String((item && item.cwd) || "").trim()
+  var hold = String(holdPrompt || "")
+  var lines = []
+  if (cwd && hold) {
+    lines.push("cd -- " + bashSingleQuote(cwd))
+    lines.push("status=$?")
+    lines.push("if [ \"$status\" -ne 0 ]; then")
+    lines.push("  echo")
+    lines.push("  " + commandHoldPrintf(hold))
+    lines.push("  read -n 1 -s -r")
+    lines.push("  printf '\\n'")
+    lines.push("  exit \"$status\"")
+    lines.push("fi")
+  } else if (cwd) {
+    lines.push("cd -- " + bashSingleQuote(cwd) + " || exit $?")
+  }
+  lines.push(command)
+  if (hold) {
+    lines.push("status=$?")
+    lines.push("echo")
+    lines.push(commandHoldPrintf(hold))
+    lines.push("read -n 1 -s -r")
+    lines.push("printf '\\n'")
+    lines.push("exit \"$status\"")
+  }
+  return lines.join("\n")
 }
 
 function filterItems(data, spaceId, filterId, query, liveFeedsMap) {
@@ -1072,6 +1152,9 @@ if (typeof module !== "undefined") {
     itemsForSpace: itemsForSpace,
     pinnedOrbitForSpace: pinnedOrbitForSpace,
     matchesItemQuery: matchesItemQuery,
+    searchCommandItems: searchCommandItems,
+    bashSingleQuote: bashSingleQuote,
+    commandShellScript: commandShellScript,
     filterItems: filterItems,
     normalizeDesktopId: normalizeDesktopId,
     searchDesktopEntries: searchDesktopEntries,
