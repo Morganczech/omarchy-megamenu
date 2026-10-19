@@ -24,8 +24,11 @@ A theme-aware Spotlight-style megamenu and bar widget for [Omarchy](https://omar
   - Add a command from the item dialog (`Ctrl+N`, then **Command**) into any category. Optional working directory, Orbit pin, and glyph icon work the same way as other items.
   - **Terminal** (default) opens the default Omarchy terminal via `xdg-terminal-exec`, runs the command with `bash -lc`, and waits for a key after it finishes. **Background** runs the same script with no window.
   - Find a saved command by its title or command text, including from `>`.
+- **Reorder & Move Between Spaces:**
+  - Hover ▲ / ▼ on a static bookmark to reorder it within its category (hidden while searching or filtering Favorites).
+  - Move an item to another space and category from the edit modal or the context menu (**Move to…** → Space → category). Orbit pins clear when the space changes.
 - **Right-Click Browser Chooser & Actions:**
-  - Right-click any item (or press `Alt+M`) to open a context menu where you can launch a URL in **any installed browser** (Brave, Zen, Firefox, Chromium, Vivaldi, LibreWolf, etc.), copy the URL, Desktop ID, or command to the clipboard (`wl-copy`), edit, or delete the item.
+  - Right-click any item (or press `Alt+M`) to open a context menu where you can launch a URL in **any installed browser** (Brave, Zen, Firefox, Chromium, Vivaldi, LibreWolf, etc.), copy the URL, Desktop ID, or command to the clipboard (`wl-copy`), edit, move, or delete the item.
 - **Browser Bookmark Importer:**
   - Automatically detects bookmark profiles from installed Chromium-based browsers (Brave, Chromium, Chrome, Vivaldi, Edge) and Firefox/Zen/LibreWolf (`places.sqlite`), as well as exported HTML files (`~/Downloads/bookmarks.html`).
   - Select which bookmark folders to import as color-coded categories into the active space.
