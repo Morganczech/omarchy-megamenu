@@ -2832,12 +2832,14 @@ Item {
                       : Util.alpha(root.foreground, 0.1)
 
                     Row {
+                      id: sysAppRow
                       anchors.fill: parent
                       anchors.leftMargin: Style.space(12)
                       anchors.rightMargin: Style.space(12)
                       spacing: Style.space(12)
 
                       Item {
+                        id: sysAppIconBox
                         width: Style.space(28)
                         height: Style.space(28)
                         anchors.verticalCenter: parent.verticalCenter
@@ -2872,7 +2874,9 @@ Item {
                       }
 
                       Column {
-                        width: parent.width - (isCommandEntry ? Style.space(40) : Style.space(180))
+                        readonly property real pinWidth: pinBtn.visible ? pinBtn.implicitWidth : 0
+                        readonly property real gaps: sysAppRow.spacing * (pinBtn.visible ? 2 : 1)
+                        width: Math.max(Style.space(40), sysAppRow.width - sysAppIconBox.width - pinWidth - gaps)
                         anchors.verticalCenter: parent.verticalCenter
 
                         Text {
@@ -2898,6 +2902,7 @@ Item {
                       }
 
                       Button {
+                        id: pinBtn
                         anchors.verticalCenter: parent.verticalCenter
                         visible: !isCommandEntry
                         text: root.tr("pinToCategoryBtn")
@@ -2926,7 +2931,7 @@ Item {
                     MouseArea {
                       id: sysAppMouse
                       anchors.fill: parent
-                      anchors.rightMargin: isCommandEntry ? 0 : Style.space(170)
+                      anchors.rightMargin: pinBtn.visible ? pinBtn.implicitWidth + Style.space(12) : 0
                       hoverEnabled: true
                       cursorShape: Qt.PointingHandCursor
                       onEntered: root.selectedAppIndex = index
