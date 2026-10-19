@@ -580,6 +580,21 @@ function categoriesForSpace(data, spaceId) {
   return out
 }
 
+function isStaticCategory(cat) {
+  if (!cat) return false
+  var t = String(cat.type || "").toLowerCase()
+  return t === "" || t === "static"
+}
+
+function staticCategoriesForSpace(data, spaceId) {
+  var all = categoriesForSpace(data, spaceId)
+  var out = []
+  for (var i = 0; i < all.length; i++) {
+    if (isStaticCategory(all[i])) out.push(all[i])
+  }
+  return out
+}
+
 function itemsForSpace(data, spaceId) {
   var list = (data && Array.isArray(data.items)) ? data.items : []
   var out = []
@@ -919,6 +934,18 @@ function searchOmarchyMenuEntries(menuEntries, query, maxResults) {
 
 // CRUD Operations returning a new state object
 
+// Insert item right after the last item of its (space, category) group, or at the end.
+function insertItemAtCategoryEnd(next, item) {
+  var insertAt = next.items.length
+  for (var j = next.items.length - 1; j >= 0; j--) {
+    if (next.items[j].spaceId === item.spaceId && next.items[j].categoryId === item.categoryId) {
+      insertAt = j + 1
+      break
+    }
+  }
+  next.items.splice(insertAt, 0, item)
+}
+
 function upsertItem(data, itemPayload) {
   var next = cloneData(data)
   var spaceId = itemPayload.spaceId || next.activeSpaceId
@@ -926,6 +953,19 @@ function upsertItem(data, itemPayload) {
   var fallbackCat = cats.length > 0 ? cats[0].id : ""
   var clean = sanitizeItem(itemPayload, spaceId, fallbackCat)
   if (!clean) return next
+
+  var previousSpaceId = ""
+  var previousCategoryId = ""
+  for (var findPrev = 0; findPrev < next.items.length; findPrev++) {
+    if (next.items[findPrev].id === clean.id) {
+      previousSpaceId = next.items[findPrev].spaceId
+      previousCategoryId = next.items[findPrev].categoryId
+      break
+    }
+  }
+  if (previousSpaceId && previousSpaceId !== clean.spaceId) {
+    clean.pinnedSlot = 0
+  }
 
   // If pinnedSlot 1..6 is chosen, clear any existing item in the same space holding that slot
   if (clean.pinnedSlot >= 1 && clean.pinnedSlot <= 6) {
@@ -937,9 +977,16 @@ function upsertItem(data, itemPayload) {
   }
 
   var updated = false
+  var relocated = false
   for (var i = 0; i < next.items.length; i++) {
     if (next.items[i].id === clean.id) {
-      next.items[i] = clean
+      relocated = previousSpaceId !== clean.spaceId || previousCategoryId !== clean.categoryId
+      if (relocated) {
+        next.items.splice(i, 1)
+        insertItemAtCategoryEnd(next, clean)
+      } else {
+        next.items[i] = clean
+      }
       updated = true
       break
     }
@@ -957,6 +1004,96 @@ function deleteItem(data, itemId) {
     if (next.items[i].id !== itemId) out.push(next.items[i])
   }
   next.items = out
+  return next
+}
+
+function moveItemInCategory(data, itemId, direction) {
+  var next = cloneData(data)
+  var id = String(itemId || "")
+  var dir = direction === "down" ? "down" : "up"
+  var idx = -1
+  for (var i = 0; i < next.items.length; i++) {
+    if (next.items[i].id === id) {
+      idx = i
+      break
+    }
+  }
+  if (idx < 0) return next
+
+  var spaceId = next.items[idx].spaceId
+  var categoryId = next.items[idx].categoryId
+  var group = []
+  for (var g = 0; g < next.items.length; g++) {
+    if (next.items[g].spaceId === spaceId && next.items[g].categoryId === categoryId) {
+      group.push(g)
+    }
+  }
+  var pos = -1
+  for (var p = 0; p < group.length; p++) {
+    if (group[p] === idx) {
+      pos = p
+      break
+    }
+  }
+  if (pos < 0) return next
+  var swapPos = dir === "up" ? pos - 1 : pos + 1
+  if (swapPos < 0 || swapPos >= group.length) return next
+
+  var a = group[pos]
+  var b = group[swapPos]
+  var tmp = next.items[a]
+  next.items[a] = next.items[b]
+  next.items[b] = tmp
+  return next
+}
+
+function moveItemToSpace(data, itemId, targetSpaceId, targetCategoryId) {
+  var next = cloneData(data)
+  var id = String(itemId || "")
+  var spaceId = String(targetSpaceId || "")
+  var categoryId = String(targetCategoryId || "")
+
+  var spaceOk = false
+  for (var s = 0; s < next.spaces.length; s++) {
+    if (next.spaces[s].id === spaceId) {
+      spaceOk = true
+      break
+    }
+  }
+  if (!spaceOk) return next
+
+  var catOk = false
+  for (var c = 0; c < next.categories.length; c++) {
+    if (next.categories[c].id === categoryId && next.categories[c].spaceId === spaceId && isStaticCategory(next.categories[c])) {
+      catOk = true
+      break
+    }
+  }
+  if (!catOk) return next
+
+  var idx = -1
+  for (var i = 0; i < next.items.length; i++) {
+    if (next.items[i].id === id) {
+      idx = i
+      break
+    }
+  }
+  if (idx < 0) return next
+
+  var item = next.items[idx]
+  if (item.spaceId === spaceId && item.categoryId === categoryId) return next
+
+  var moved = {}
+  for (var prop in item) {
+    if (Object.prototype.hasOwnProperty.call(item, prop)) moved[prop] = item[prop]
+  }
+  var spaceChanged = moved.spaceId !== spaceId
+  moved.spaceId = spaceId
+  moved.categoryId = categoryId
+  if (spaceChanged) moved.pinnedSlot = 0
+
+  next.items.splice(idx, 1)
+  insertItemAtCategoryEnd(next, moved)
   return next
 }
 
@@ -1149,6 +1286,8 @@ if (typeof module !== "undefined") {
     serialize: serialize,
     cloneData: cloneData,
     categoriesForSpace: categoriesForSpace,
+    isStaticCategory: isStaticCategory,
+    staticCategoriesForSpace: staticCategoriesForSpace,
     itemsForSpace: itemsForSpace,
     pinnedOrbitForSpace: pinnedOrbitForSpace,
     matchesItemQuery: matchesItemQuery,
@@ -1162,6 +1301,8 @@ if (typeof module !== "undefined") {
     searchOmarchyMenuEntries: searchOmarchyMenuEntries,
     upsertItem: upsertItem,
     deleteItem: deleteItem,
+    moveItemInCategory: moveItemInCategory,
+    moveItemToSpace: moveItemToSpace,
     toggleFavorite: toggleFavorite,
     upsertCategory: upsertCategory,
     deleteCategory: deleteCategory,
