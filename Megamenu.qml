@@ -72,6 +72,7 @@ Item {
 
   // Context Menu & Spaces Dropdown state
   property bool contextMenuOpen: false
+  property string contextMoveBrowseSpaceId: ""
   property var contextMenuItem: null
   property real contextMenuX: 0
   property real contextMenuY: 0
@@ -93,6 +94,8 @@ Item {
   property string formItemCwd: ""
   property string formItemRunMode: "terminal" // "terminal" | "background"
   property string formItemCategoryId: ""
+  property string formItemSpaceId: ""
+  property string formItemOriginalSpaceId: ""
   property string formItemIconType: "favicon" // "favicon" | "glyph" | "system" | "monogram"
   property string formItemIconValue: ""
   property string formItemBadgeText: ""
@@ -366,6 +369,12 @@ Item {
     }
     root.ensureSelectedValid()
     root.queueMissingFavicons()
+  }
+
+  function reorderItemInCategory(itemId, direction) {
+    if (!itemId) return
+    var next = Storage.moveItemInCategory(root.data, itemId, direction)
+    root.commitData(next)
   }
 
   function hydrateData(rawText) {
@@ -716,6 +725,7 @@ Item {
     if (!item) return
     root.spacesDropdownOpen = false
     root.contextMenuItem = item
+    root.contextMoveBrowseSpaceId = ""
     var menuW = Style.space(260)
     var menuH = Style.space(250)
     var maxX = card.width - menuW - Style.space(12)
@@ -724,6 +734,36 @@ Item {
     root.contextMenuY = Math.max(Style.space(12), Math.min(maxY, globalY))
     root.contextMenuOpen = true
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  function confirmMoveItem(targetSpaceId, targetCategoryId) {
+    var item = root.contextMenuItem
+    if (!item || item.isLiveItem === true || item.isSystemResult === true) return
+    var cats = Storage.staticCategoriesForSpace(root.data, targetSpaceId)
+    if (!cats || cats.length === 0) {
+      root.showStatus(root.tr("statusMoveFailed"))
+      root.contextMenuOpen = false
+      return
+    }
+    var catOk = false
+    for (var i = 0; i < cats.length; i++) {
+      if (cats[i].id === targetCategoryId) {
+        catOk = true
+        break
+      }
+    }
+    if (!catOk) {
+      root.showStatus(root.tr("statusMoveFailed"))
+      root.contextMenuOpen = false
+      return
+    }
+    var unchanged = item.spaceId === targetSpaceId && item.categoryId === targetCategoryId
+    var next = Storage.moveItemToSpace(root.data, item.id, targetSpaceId, targetCategoryId)
+    root.contextMenuOpen = false
+    root.contextMoveBrowseSpaceId = ""
+    if (unchanged) return
+    root.commitData(next)
+    root.showStatus(root.tr("statusItemMoved") + (item.title || ""))
   }
 
   function toggleSpacesDropdown(anchorItem) {
@@ -743,6 +783,27 @@ Item {
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
+  function formCategoriesForSelectedSpace() {
+    return Storage.staticCategoriesForSpace(root.data, root.formItemSpaceId || root.activeSpaceId)
+  }
+
+  function onFormSpaceChosen(spaceId) {
+    if (!spaceId || spaceId === root.formItemSpaceId) return
+    root.formItemSpaceId = spaceId
+    var cats = root.formCategoriesForSelectedSpace()
+    var stillValid = false
+    for (var i = 0; i < cats.length; i++) {
+      if (cats[i].id === root.formItemCategoryId) {
+        stillValid = true
+        break
+      }
+    }
+    root.formItemCategoryId = stillValid ? root.formItemCategoryId : (cats.length ? cats[0].id : "")
+    if (spaceId !== root.formItemOriginalSpaceId && root.formItemPinnedSlot > 0) {
+      root.formItemPinnedSlot = 0
+    }
+  }
+
   // Modal openers
   function openAddItemModal(preselectedCategoryId, preselectedSlot) {
     root.contextMenuOpen = false
@@ -759,6 +820,8 @@ Item {
     root.formItemCwd = ""
     root.formItemRunMode = "terminal"
     root.formItemCategoryId = defaultCat
+    root.formItemSpaceId = root.activeSpaceId
+    root.formItemOriginalSpaceId = root.activeSpaceId
     root.formItemIconType = "favicon"
     root.formItemIconValue = ""
     root.formItemBadgeText = ""
@@ -786,6 +849,8 @@ Item {
     root.formItemCwd = item.cwd || ""
     root.formItemRunMode = item.runMode === "background" ? "background" : "terminal"
     root.formItemCategoryId = item.categoryId || ""
+    root.formItemSpaceId = item.spaceId || root.activeSpaceId
+    root.formItemOriginalSpaceId = root.formItemSpaceId
     root.formItemIconValue = customIcon
     root.formItemIconType = (itType === "url")
       ? (customIcon.length > 0 ? "glyph" : "favicon")
@@ -809,6 +874,18 @@ Item {
       root.showStatus(root.tr("statusEnterCommand"))
       return
     }
+    var formCats = root.formCategoriesForSelectedSpace()
+    var catValid = false
+    for (var fc = 0; fc < formCats.length; fc++) {
+      if (formCats[fc].id === root.formItemCategoryId) {
+        catValid = true
+        break
+      }
+    }
+    if (!catValid) {
+      root.showStatus(root.tr("statusMoveFailed"))
+      return
+    }
     var trimmedIcon = root.formItemIconValue.trim()
     var resolvedIconType = "system"
     if (root.formItemType === "url") {
@@ -819,7 +896,7 @@ Item {
     }
     var payload = {
       id: root.formItemId || Storage.uid("item"),
-      spaceId: root.activeSpaceId,
+      spaceId: root.formItemSpaceId || root.activeSpaceId,
       categoryId: root.formItemCategoryId,
       type: root.formItemType,
       title: title,
@@ -2627,6 +2704,7 @@ Item {
                       delegate: Rectangle {
                         id: itemRowRect
                         required property var modelData
+                        required property int index
                         readonly property bool isLoadMore: modelData.isLoadMore === true
                         readonly property bool isSelected: root.selectedItemId === modelData.id
                         readonly property bool isHovered: rowMouse.containsMouse
@@ -2766,6 +2844,65 @@ Item {
                           anchors.rightMargin: Style.space(6)
                           anchors.verticalCenter: parent.verticalCenter
                           spacing: Style.space(4)
+
+                          // Reorder up/down (static items only, category columns only)
+                          Rectangle {
+                            width: Style.space(24)
+                            height: Style.space(24)
+                            radius: 4
+                            visible: !itemRowRect.isLiveEntry
+                              && !(modelData.isSystemResult === true)
+                              && (itemRowRect.isHovered || itemRowRect.isSelected)
+                              && itemRowRect.index > 0
+                              && root.searchQuery.trim().length === 0
+                              && root.activeFilter !== "favorites"
+                            color: moveUpMouse.containsMouse ? Util.alpha(root.foreground, 0.12) : "transparent"
+
+                            Text {
+                              anchors.centerIn: parent
+                              text: "▲"
+                              color: Color.muted
+                              font.family: root.fontFamily
+                              font.pixelSize: Style.font.caption
+                            }
+
+                            MouseArea {
+                              id: moveUpMouse
+                              anchors.fill: parent
+                              hoverEnabled: true
+                              cursorShape: Qt.PointingHandCursor
+                              onClicked: root.reorderItemInCategory(modelData.id, "up")
+                            }
+                          }
+
+                          Rectangle {
+                            width: Style.space(24)
+                            height: Style.space(24)
+                            radius: 4
+                            visible: !itemRowRect.isLiveEntry
+                              && !(modelData.isSystemResult === true)
+                              && (itemRowRect.isHovered || itemRowRect.isSelected)
+                              && itemRowRect.index < (catListView.count - 1)
+                              && root.searchQuery.trim().length === 0
+                              && root.activeFilter !== "favorites"
+                            color: moveDownMouse.containsMouse ? Util.alpha(root.foreground, 0.12) : "transparent"
+
+                            Text {
+                              anchors.centerIn: parent
+                              text: "▼"
+                              color: Color.muted
+                              font.family: root.fontFamily
+                              font.pixelSize: Style.font.caption
+                            }
+
+                            MouseArea {
+                              id: moveDownMouse
+                              anchors.fill: parent
+                              hoverEnabled: true
+                              cursorShape: Qt.PointingHandCursor
+                              onClicked: root.reorderItemInCategory(modelData.id, "down")
+                            }
+                          }
 
                           // Favorite Star Toggle (or Save Bookmark for Live Items)
                           Rectangle {
@@ -3099,23 +3236,41 @@ Item {
         x: root.contextMenuX
         y: root.contextMenuY
         width: Style.space(264)
-        height: contextMenuCol.implicitHeight + Style.space(16)
+        height: Math.min(contextMenuCol.implicitHeight + Style.space(16),
+                         Math.max(Style.space(120), card.height - root.contextMenuY - Style.space(12)))
         radius: Style.cornerRadius > 0 ? Math.max(6, Style.cornerRadius) : 6
         color: Color.popups.background
         border.width: 1.5
         border.color: Color.popups.border
         z: 50
 
+        // Keep the popup on-card when its content (Move browse lists) grows.
+        function reclampY() {
+          var wantH = Math.min(contextMenuCol.implicitHeight + Style.space(16), card.height - Style.space(24))
+          root.contextMenuY = Math.max(Style.space(12), Math.min(root.contextMenuY, card.height - wantH - Style.space(12)))
+        }
+        onVisibleChanged: if (visible) reclampY()
+
         MouseArea {
           anchors.fill: parent
           acceptedButtons: Qt.AllButtons
         }
 
-        Column {
-          id: contextMenuCol
+        Flickable {
+          id: contextMenuFlick
           anchors.fill: parent
           anchors.margins: Style.space(8)
+          clip: true
+          contentWidth: width
+          contentHeight: contextMenuCol.implicitHeight
+          boundsBehavior: Flickable.StopAtBounds
+          flickableDirection: Flickable.VerticalFlick
+
+        Column {
+          id: contextMenuCol
+          width: parent.width
           spacing: Style.space(4)
+          onImplicitHeightChanged: if (contextMenuPopup.visible) contextMenuPopup.reclampY()
 
           // Header: LAUNCH IN TARGET...
           Text {
@@ -3326,6 +3481,105 @@ Item {
             }
           }
 
+          // Move to… (two-step: spaces list, then categories)
+          Rectangle {
+            visible: root.contextMenuItem === null || (root.contextMenuItem.isLiveItem !== true && root.contextMenuItem.isSystemResult !== true)
+            width: contextMenuCol.width
+            height: Style.space(30)
+            radius: 4
+            color: moveCtxMouse.containsMouse ? root.selectedBackground : "transparent"
+
+            Text {
+              anchors.left: parent.left
+              anchors.leftMargin: Style.space(8)
+              anchors.verticalCenter: parent.verticalCenter
+              text: root.contextMoveBrowseSpaceId === "" ? root.tr("ctxMoveTo") : root.tr("ctxMoveBack")
+              color: moveCtxMouse.containsMouse ? root.selectedText : root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+            }
+
+            MouseArea {
+              id: moveCtxMouse
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: {
+                if (root.contextMoveBrowseSpaceId !== "") {
+                  root.contextMoveBrowseSpaceId = ""
+                } else {
+                  root.contextMoveBrowseSpaceId = "__pick__"
+                }
+              }
+            }
+          }
+
+          // Space list (when picking)
+          Repeater {
+            model: {
+              if (!root.contextMenuOpen || root.contextMoveBrowseSpaceId !== "__pick__") return []
+              return (root.data && root.data.spaces) ? root.data.spaces : []
+            }
+            delegate: Rectangle {
+              required property var modelData
+              width: contextMenuCol.width
+              height: Style.space(30)
+              radius: 4
+              color: spaceMoveMouse.containsMouse ? root.selectedBackground : "transparent"
+
+              Text {
+                anchors.left: parent.left
+                anchors.leftMargin: Style.space(16)
+                anchors.verticalCenter: parent.verticalCenter
+                text: (modelData.icon || "󰀻") + "  " + modelData.name
+                color: spaceMoveMouse.containsMouse ? root.selectedText : root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+              }
+
+              MouseArea {
+                id: spaceMoveMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.contextMoveBrowseSpaceId = modelData.id
+              }
+            }
+          }
+
+          // Category list for chosen space
+          Repeater {
+            model: {
+              if (!root.contextMenuOpen || root.contextMoveBrowseSpaceId === "" || root.contextMoveBrowseSpaceId === "__pick__") return []
+              return Storage.staticCategoriesForSpace(root.data, root.contextMoveBrowseSpaceId)
+            }
+            delegate: Rectangle {
+              required property var modelData
+              width: contextMenuCol.width
+              height: Style.space(30)
+              radius: 4
+              color: catMoveMouse.containsMouse ? root.selectedBackground : "transparent"
+
+              Text {
+                anchors.left: parent.left
+                anchors.leftMargin: Style.space(16)
+                anchors.verticalCenter: parent.verticalCenter
+                text: (modelData.icon || "󰉋") + "  " + modelData.name
+                color: catMoveMouse.containsMouse ? root.selectedText : root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+              }
+
+              MouseArea {
+                id: catMoveMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.confirmMoveItem(root.contextMoveBrowseSpaceId, modelData.id)
+              }
+            }
+          }
+
           // Delete Item (only for static bookmarks)
           Rectangle {
             visible: root.contextMenuItem === null || (root.contextMenuItem.isLiveItem !== true && root.contextMenuItem.isSystemResult !== true)
@@ -3360,6 +3614,7 @@ Item {
               }
             }
           }
+        }
         }
       }
 
@@ -3789,6 +4044,29 @@ Item {
               }
             }
 
+            // Space Selector Pills
+            Column {
+              width: parent.width
+              spacing: 4
+              Text { text: root.tr("fieldSpace"); color: Color.muted; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
+
+              Flow {
+                width: parent.width
+                spacing: Style.space(6)
+
+                Repeater {
+                  model: (root.data && root.data.spaces) ? root.data.spaces : []
+                  delegate: Button {
+                    required property var modelData
+                    text: (modelData.icon || "󰀻") + " " + modelData.name
+                    bordered: true
+                    selected: root.formItemSpaceId === modelData.id
+                    onClicked: root.onFormSpaceChosen(modelData.id)
+                  }
+                }
+              }
+            }
+
             // Category Selector Pills
             Column {
               width: parent.width
@@ -3800,7 +4078,7 @@ Item {
                 spacing: Style.space(6)
 
                 Repeater {
-                  model: root.currentCategories
+                  model: root.formCategoriesForSelectedSpace()
                   delegate: Button {
                     required property var modelData
                     text: (modelData.icon || "󰉋") + " " + modelData.name
