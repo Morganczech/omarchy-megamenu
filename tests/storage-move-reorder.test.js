@@ -125,7 +125,7 @@ assert.strictEqual(typeof S.moveItemToSpace, "function", "moveItemToSpace export
 {
   const data = fixture()
   const next = S.moveItemToSpace(data, "i1", "s1", "c2")
-  const item = next.items.find(function(i) { return i.id === "i2" })
+  const item = next.items.find(function(i) { return i.id === "i1" })
   assert.strictEqual(item.spaceId, "s1")
   assert.strictEqual(item.categoryId, "c2")
   assert.strictEqual(item.pinnedSlot, 0)

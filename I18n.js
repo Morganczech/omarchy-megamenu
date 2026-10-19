@@ -83,6 +83,10 @@ var STRINGS = {
     ctxCopyUrl: "󰆏  Copy URL",
     ctxCopyCommand: "󰆏  Copy command",
     ctxEditItem: "󰏫  Edit bookmark",
+    ctxMoveTo: "󰀻  Move to…",
+    ctxMoveBack: "← Spaces",
+    statusItemMoved: "Moved: ",
+    statusMoveFailed: "Could not move item (missing space or category)",
     ctxDelete: "󰩺  Delete",
 
     // Modal A: Add / Edit Item
@@ -106,6 +110,7 @@ var STRINGS = {
     fieldSubtitlePlaceholder: "e.g. dash.cloudflare.com • DNS",
     fieldUrl: "URL address",
     fieldCategory: "Category",
+    fieldSpace: "Space",
     fieldPinOrbit: "Pin to Quick Orbit [1-6]",
     pinNone: "None",
     fieldBadge: "Badge",
@@ -240,6 +245,10 @@ var STRINGS = {
     ctxCopyUrl: "󰆏  Kopírovat URL",
     ctxCopyCommand: "󰆏  Kopírovat příkaz",
     ctxEditItem: "󰏫  Upravit položku",
+    ctxMoveTo: "󰀻  Přesunout do…",
+    ctxMoveBack: "← Prostory",
+    statusItemMoved: "Přesunuto: ",
+    statusMoveFailed: "Položku nelze přesunout (chybí prostor nebo kategorie)",
     ctxDelete: "󰩺  Smazat",
 
     // Modal A: Add / Edit Item
@@ -263,6 +272,7 @@ var STRINGS = {
     fieldSubtitlePlaceholder: "Např. dash.cloudflare.com • DNS",
     fieldUrl: "URL adresa",
     fieldCategory: "Kategorie",
+    fieldSpace: "Prostor",
     fieldPinOrbit: "Připnout do Quick Orbitu [1-6]",
     pinNone: "Nic",
     fieldBadge: "Štítek (Badge)",
