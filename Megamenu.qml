@@ -130,6 +130,7 @@ Item {
 
   // Global Shortcut Modal state (strictly opt-in; read-only status check on startup)
   property string currentGlobalShortcut: ""
+  property bool browserHostRegistered: false
   property string formShortcutCombo: "SUPER + M"
 
   // Theme-bound surface tokens from qs.Commons
@@ -150,6 +151,7 @@ Item {
   readonly property var currentSpaceItems: Storage.itemsForSpace(root.data, root.activeSpaceId)
   readonly property var pinnedOrbit: Storage.pinnedOrbitForSpace(root.data, root.activeSpaceId)
   readonly property var filteredFlatItems: Storage.filterItems(root.data, root.activeSpaceId, root.activeFilter, root.searchQuery, root.liveFeedsMap)
+  readonly property var frequentItems: Storage.frequentItems(root.data, 8)
   readonly property bool isCommandMode: root.searchQuery.trim().indexOf(">") === 0
   readonly property var matchedSystemApps: {
     if (!root.isCommandMode) return []
@@ -298,7 +300,11 @@ Item {
     if (!appIconScanProc.running) appIconScanProc.running = true
     root.refreshBrowsers()
     root.applyGlobalShortcut("", "status")
-    root.refreshLiveFeeds(false, "")
+    // Plugin stays loaded, so pick up pages saved by the browser host since the last open.
+    // hydrateData() refreshes live feeds after the file loads.
+    if (root.dirReady) dataFile.reload()
+    else root.refreshLiveFeeds(false, "")
+    root.refreshBrowserHostStatus()
     root.ensureSelectedValid()
     Qt.callLater(function() {
       if (searchInput) searchInput.forceActiveFocus()
@@ -377,26 +383,57 @@ Item {
     root.commitData(next)
   }
 
+  function spaceNameKey(name) {
+    return String(name || "").trim().toLowerCase()
+  }
+
+  function isReadingListSpace(space) {
+    if (!space) return false
+    if (space.id === "reading-list") return true
+    var name = root.spaceNameKey(space.name)
+    return name === "seznam čtení" || name === "reading list"
+  }
+
+  // Copy missing shipped spaces (and their categories) onto an existing data file.
+  // Returns true when parsed was changed.
+  function ensureSeedSpaces(parsed) {
+    var def = Storage.defaultData()
+    var seedIds = ["live-pulse", "reading-list"]
+    var changed = false
+    for (var si = 0; si < seedIds.length; si++) {
+      var seedId = seedIds[si]
+      var present = false
+      for (var s = 0; s < parsed.spaces.length; s++) {
+        var existing = parsed.spaces[s]
+        if (existing.id === seedId || (seedId === "reading-list" && root.isReadingListSpace(existing))) {
+          present = true
+          break
+        }
+      }
+      if (present) continue
+      for (var ds = 0; ds < def.spaces.length; ds++) {
+        if (def.spaces[ds].id === seedId) {
+          parsed.spaces.push(def.spaces[ds])
+          changed = true
+        }
+      }
+      for (var dc = 0; dc < def.categories.length; dc++) {
+        if (def.categories[dc].spaceId === seedId) {
+          parsed.categories.push(def.categories[dc])
+          changed = true
+        }
+      }
+    }
+    return changed
+  }
+
   function hydrateData(rawText) {
     var hasExisting = rawText && String(rawText).trim().length > 0
     var parsed = Storage.parse(rawText)
 
-    // Ensure the default "live-pulse" showcase space exists so users upgrading get Live Feeds out of the box
-    var hasLivePulse = false
-    for (var s = 0; s < parsed.spaces.length; s++) {
-      if (parsed.spaces[s].id === "live-pulse") {
-        hasLivePulse = true
-        break
-      }
-    }
-    if (hasExisting && !hasLivePulse) {
-      var def = Storage.defaultData()
-      for (var ds = 0; ds < def.spaces.length; ds++) {
-        if (def.spaces[ds].id === "live-pulse") parsed.spaces.push(def.spaces[ds])
-      }
-      for (var dc = 0; dc < def.categories.length; dc++) {
-        if (def.categories[dc].spaceId === "live-pulse") parsed.categories.push(def.categories[dc])
-      }
+    // Keep shipped spaces present for existing data files. A renamed reading list
+    // (same id, or the name "Seznam čtení" / "Reading List") is left alone.
+    if (hasExisting && root.ensureSeedSpaces(parsed)) {
       dataFile.setText(Storage.serialize(parsed))
     }
 
@@ -416,12 +453,48 @@ Item {
     if ((cat && cat.type === "omarchy") || catId === "__omarchy_system__") {
       return root.searchSystemColumnItems || []
     }
+    if (cat && cat.type === "other-space") {
+      var sid = String(cat.spaceId || "")
+      var allOther = root.filteredFlatItems || []
+      var otherList = []
+      for (var o = 0; o < allOther.length; o++) {
+        if (allOther[o].spaceId === sid) otherList.push(allOther[o])
+      }
+      return otherList
+    }
     var all = root.filteredFlatItems || []
     var list = []
     for (var i = 0; i < all.length; i++) {
       if (all[i].categoryId === catId) list.push(all[i])
     }
     return list
+  }
+
+  function otherSpaceCategoryEntries() {
+    var q = String(root.searchQuery || "").trim()
+    if (!q || root.isCommandMode) return []
+    if (root.activeFilter !== "all" && root.activeFilter !== "favorites") return []
+    var groups = Storage.otherSpaceSearchGroups(root.data, root.activeSpaceId, root.filteredFlatItems)
+    var out = []
+    for (var i = 0; i < groups.length; i++) {
+      var g = groups[i]
+      out.push({
+        id: "__other_space__" + g.spaceId,
+        spaceId: g.spaceId,
+        name: g.name,
+        icon: g.icon || "󰀻",
+        colorRole: "magenta",
+        type: "other-space"
+      })
+    }
+    return out
+  }
+
+  function bumpLaunchStats(item) {
+    if (!item || !item.id) return
+    if (item.isSystemResult || item.isLiveItem || item.isLoadMore) return
+    var next = Storage.recordLaunch(root.data, item.id)
+    root.commitData(next)
   }
 
   function liveVisibleLimit(catId) {
@@ -474,6 +547,14 @@ Item {
       var colItems = root.visibleColumnItems(cat)
       if (colItems.length > 0) {
         cols.push({ category: cat, items: colItems })
+      }
+    }
+    var otherCats = root.otherSpaceCategoryEntries()
+    for (var o = 0; o < otherCats.length; o++) {
+      var otherCat = otherCats[o]
+      var otherItems = root.itemsForCategory(otherCat)
+      if (otherItems.length > 0) {
+        cols.push({ category: otherCat, items: otherItems })
       }
     }
     var sysItems = root.searchSystemColumnItems || []
@@ -692,6 +773,7 @@ Item {
 
   function launchItemDefault(item) {
     if (!item) return
+    root.bumpLaunchStats(item)
     root.dismiss()
     if (item.type === "app") {
       root.launchDesktopApp(item.desktopId, item.title)
@@ -704,6 +786,7 @@ Item {
 
   function launchItemInBrowser(item, browser) {
     if (!item || !item.url || !browser || !browser.exec) return
+    root.bumpLaunchStats(item)
     root.dismiss()
     Util.execDetached("uwsm-app -- " + browser.exec + " " + Util.shellQuote(item.url))
   }
@@ -1039,6 +1122,31 @@ Item {
     root.closeContextMenu()
     root.formShortcutCombo = root.currentGlobalShortcut || "SUPER + M"
     root.activeModal = "shortcut"
+  }
+
+  function refreshBrowserHostStatus() {
+    if (browserHostProc.running) return
+    browserHostProc.pendingMode = "status"
+    browserHostProc.command = [
+      "python3",
+      root.pluginDir + "/scripts/install-browser-host.py",
+      "--status",
+      "--firefox-only",
+      "--json"
+    ]
+    browserHostProc.running = true
+  }
+
+  function registerBrowserHost() {
+    if (browserHostProc.running && browserHostProc.pendingMode === "register") return
+    browserHostProc.pendingMode = "register"
+    browserHostProc.command = [
+      "python3",
+      root.pluginDir + "/scripts/install-browser-host.py",
+      "--firefox-only",
+      "--json"
+    ]
+    browserHostProc.running = true
   }
 
   function applyGlobalShortcut(comboValue, mode) {
@@ -1442,6 +1550,38 @@ Item {
     interval: 2800
     repeat: false
     onTriggered: root.statusBannerText = ""
+  }
+
+  Process {
+    id: browserHostProc
+    property string pendingMode: "status"
+    running: false
+    stdout: StdioCollector {
+      id: browserHostOut
+      waitForEnd: true
+    }
+    stderr: StdioCollector {
+      id: browserHostErr
+      waitForEnd: true
+    }
+    onExited: {
+      var raw = String(browserHostOut.text || "").trim()
+      var res = null
+      try {
+        res = JSON.parse(raw)
+      } catch (e) {}
+      if (res && res.ok) {
+        root.browserHostRegistered = res.registered === true
+        if (browserHostProc.pendingMode === "register") {
+          root.showStatus(root.tr("statusBrowserHostSaved"))
+        }
+        return
+      }
+      if (browserHostProc.pendingMode === "register") {
+        var detail = (res && res.error) ? res.error : String(browserHostErr.text || "").trim()
+        root.showStatus(root.tr("statusBrowserHostError") + (detail || "unknown error"))
+      }
+    }
   }
 
   Process {
@@ -1859,6 +1999,15 @@ Item {
             }
 
             Button {
+              text: root.browserHostRegistered ? root.tr("browserHostBtnOn") : root.tr("browserHostBtn")
+              bordered: true
+              tooltipText: root.browserHostRegistered
+                ? root.tr("browserHostTooltipOn")
+                : root.tr("browserHostTooltip")
+              onClicked: root.registerBrowserHost()
+            }
+
+            Button {
               text: "󰗊 " + root.activeLang.toUpperCase() + (root.languagePref === "auto" ? " (A)" : "")
               bordered: true
               tooltipText: root.tr("langTooltip")
@@ -1901,7 +2050,7 @@ Item {
         Column {
           id: searchSection
           width: parent.width
-          spacing: Style.spacing.sm
+          spacing: Style.space(14)
 
           // Search Box Container
           Rectangle {
@@ -2177,6 +2326,107 @@ Item {
         }
 
         // ============================================================
+        // 3a. FREQUENT (usage-ranked, empty search only)
+        // ============================================================
+        Column {
+          id: frequentSection
+          width: parent.width
+          spacing: Style.space(6)
+          visible: !root.isCommandMode
+                   && root.searchQuery.trim().length === 0
+                   && root.frequentItems.length > 0
+
+          Item {
+            width: parent.width
+            height: Style.space(18)
+
+            Text {
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+              text: root.tr("frequentHeader")
+              color: root.roleColor("yellow")
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: true
+            }
+          }
+
+          Row {
+            id: frequentRow
+            width: parent.width
+            spacing: Style.space(8)
+
+            Repeater {
+              model: root.frequentItems
+
+              delegate: Rectangle {
+                required property var modelData
+                readonly property color freqAccent: root.itemAccentColor(modelData, "yellow")
+                width: Math.min(
+                  Style.space(160),
+                  Math.max(
+                    Style.space(110),
+                    (frequentRow.width - Style.space(8) * Math.max(0, root.frequentItems.length - 1)) / Math.max(1, root.frequentItems.length)
+                  )
+                )
+                height: Style.space(40)
+                radius: Style.cornerRadius > 0 ? Math.max(5, Style.cornerRadius - 1) : 5
+                color: freqMouse.containsMouse
+                  ? Util.alpha(freqAccent, 0.18)
+                  : Util.alpha(root.foreground, 0.04)
+                border.width: 1
+                border.color: freqMouse.containsMouse
+                  ? Util.alpha(freqAccent, 0.55)
+                  : Util.alpha(root.foreground, 0.12)
+
+                Row {
+                  anchors.fill: parent
+                  anchors.leftMargin: Style.space(8)
+                  anchors.rightMargin: Style.space(8)
+                  spacing: Style.space(8)
+
+                  ItemIconBadge {
+                    itemData: modelData
+                    fallbackRole: "yellow"
+                    activeHighlight: freqMouse.containsMouse
+                    boxSize: Style.space(24)
+                    anchors.verticalCenter: parent.verticalCenter
+                  }
+
+                  Text {
+                    width: Math.max(Style.space(40), parent.width - Style.space(32))
+                    anchors.verticalCenter: parent.verticalCenter
+                    elide: Text.ElideRight
+                    textFormat: Text.PlainText
+                    text: modelData.title || ""
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+                  }
+                }
+
+                MouseArea {
+                  id: freqMouse
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  acceptedButtons: Qt.LeftButton | Qt.RightButton
+                  onClicked: function(mouse) {
+                    if (mouse.button === Qt.RightButton) {
+                      var pos = freqMouse.mapToItem(card, mouse.x, mouse.y)
+                      root.openContextMenuFor(modelData, pos.x, pos.y)
+                    } else {
+                      root.launchItemDefault(modelData)
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        // ============================================================
         // 3. QUICK ACCESS / PRIMARY ORBIT [1 - 6]
         // ============================================================
         Column {
@@ -2425,6 +2675,7 @@ Item {
           height: parent.height
                   - topHeader.height
                   - searchSection.height
+                  - (frequentSection.visible ? frequentSection.height + Style.spacing.md : 0)
                   - (orbitSection.visible ? orbitSection.height + Style.spacing.md : 0)
                   - footerBar.height
                   - Style.spacing.md * 3
@@ -2455,6 +2706,7 @@ Item {
 
               readonly property var activeCategoryList: {
                 var baseList = []
+                var searching = String(root.searchQuery || "").trim().length > 0 && !root.isCommandMode
                 if (root.activeFilter !== "all" && root.activeFilter !== "favorites") {
                   for (var i = 0; i < root.currentCategories.length; i++) {
                     if (root.currentCategories[i].id === root.activeFilter) {
@@ -2464,6 +2716,17 @@ Item {
                 } else {
                   for (var j = 0; j < root.currentCategories.length; j++) {
                     baseList.push(root.currentCategories[j])
+                  }
+                }
+                if (searching) {
+                  var nonEmpty = []
+                  for (var n = 0; n < baseList.length; n++) {
+                    if (root.itemsForCategory(baseList[n]).length > 0) nonEmpty.push(baseList[n])
+                  }
+                  baseList = nonEmpty
+                  var otherCats = root.otherSpaceCategoryEntries()
+                  for (var o = 0; o < otherCats.length; o++) {
+                    if (root.itemsForCategory(otherCats[o]).length > 0) baseList.push(otherCats[o])
                   }
                 }
                 if (root.searchSystemColumnItems && root.searchSystemColumnItems.length > 0) {
@@ -2486,6 +2749,7 @@ Item {
                   required property var modelData
                   readonly property bool isLiveCat: modelData.type === "rss" || modelData.type === "github"
                   readonly property bool isOmarchyCat: modelData.type === "omarchy"
+                  readonly property bool isOtherSpaceCat: modelData.type === "other-space"
                   readonly property color catAccent: root.roleColor(modelData.colorRole)
                   readonly property var columnSourceItems: root.itemsForCategory(modelData)
                   readonly property var columnItems: root.visibleColumnItems(modelData)
@@ -2567,7 +2831,7 @@ Item {
 
                           Rectangle {
                             id: liveTypeBadge
-                            visible: catColumnCard.isLiveCat
+                            visible: catColumnCard.isLiveCat || catColumnCard.isOtherSpaceCat
                             height: Style.space(16)
                             width: liveTypeTag.implicitWidth + Style.space(8)
                             radius: 3
@@ -2577,7 +2841,9 @@ Item {
                             Text {
                               id: liveTypeTag
                               anchors.centerIn: parent
-                              text: modelData.type === "github" ? "GH" : "RSS"
+                              text: catColumnCard.isOtherSpaceCat
+                                ? root.tr("otherSpaceBadge")
+                                : (modelData.type === "github" ? "GH" : "RSS")
                               color: catColumnCard.catAccent
                               font.family: root.fontFamily
                               font.pixelSize: Style.font.caption - 2
@@ -2588,10 +2854,10 @@ Item {
 
                         MouseArea {
                           anchors.fill: parent
-                          enabled: !catColumnCard.isOmarchyCat
-                          cursorShape: catColumnCard.isOmarchyCat ? Qt.ArrowCursor : Qt.PointingHandCursor
+                          enabled: !catColumnCard.isOmarchyCat && !catColumnCard.isOtherSpaceCat
+                          cursorShape: (catColumnCard.isOmarchyCat || catColumnCard.isOtherSpaceCat) ? Qt.ArrowCursor : Qt.PointingHandCursor
                           onClicked: {
-                            if (!catColumnCard.isOmarchyCat) root.openCategoryModal(modelData)
+                            if (!catColumnCard.isOmarchyCat && !catColumnCard.isOtherSpaceCat) root.openCategoryModal(modelData)
                           }
                         }
                       }
@@ -2623,7 +2889,7 @@ Item {
                         }
 
                         Rectangle {
-                          visible: !catColumnCard.isOmarchyCat
+                          visible: !catColumnCard.isOmarchyCat && !catColumnCard.isOtherSpaceCat
                           width: Style.space(22)
                           height: Style.space(20)
                           radius: Style.cornerRadius > 0 ? Math.max(3, Style.cornerRadius - 2) : 3

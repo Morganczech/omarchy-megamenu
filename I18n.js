@@ -19,6 +19,12 @@ var STRINGS = {
     langTooltip: "Switch interface language (Auto / EN / CS)",
     shortcutSetBtnLabel: "Set shortcut",
     shortcutBtnTooltip: "Global hotkey to toggle Megamenu (click to configure)",
+    browserHostBtn: "Page save",
+    browserHostBtnOn: "Page save on",
+    browserHostTooltip: "Registers the local helper so Firefox/Zen can write into Megamenu. You still need the Omarchy Megamenu add-on from Mozilla Add-ons (or Zen).",
+    browserHostTooltipOn: "Local helper is on. Install Omarchy Megamenu from Mozilla Add-ons in Firefox or Zen to save the current page from the toolbar.",
+    statusBrowserHostSaved: "Firefox and Zen can save pages into Megamenu",
+    statusBrowserHostError: "Could not register the browser helper: ",
     spacesMoreBtn: "More",
     spacesDropdownHeader: "ALL SPACES",
     spacesAddAction: "+ Create new Space",
@@ -34,10 +40,12 @@ var STRINGS = {
     statusShortcutError: "Shortcut error: ",
 
     // Search & Filters
-    searchPlaceholder: "Search bookmarks, commands, Omarchy actions, or '>' for all...",
+    searchPlaceholder: "Search all spaces, commands, Omarchy actions, or '>' for apps...",
     filterAll: "All",
     filterFavorites: "★ Favorites",
     omarchyColumnName: "Omarchy & Apps",
+    otherSpaceBadge: "SPACE",
+    frequentHeader: "★ FREQUENT",
 
     // Orbit Section
     orbitHeader: "󱐋 QUICK ACCESS / PRIMARY ORBIT",
@@ -181,6 +189,12 @@ var STRINGS = {
     langTooltip: "Přepnout jazyk rozhraní (Auto / EN / CS)",
     shortcutSetBtnLabel: "Nastavit zkratku",
     shortcutBtnTooltip: "Globální klávesová zkratka pro otevření Megamenu (klikni pro změnu)",
+    browserHostBtn: "Ukládání stránek",
+    browserHostBtnOn: "Ukládání zapnuto",
+    browserHostTooltip: "Zaregistruje místního pomocníka, aby Firefox/Zen mohly zapisovat do Megamenu. Rozšíření Omarchy Megamenu si musíš zvlášť nainstalovat z Mozilla Add-ons (Firefox nebo Zen).",
+    browserHostTooltipOn: "Místní pomocník je zapnutý. Ve Firefoxu nebo Zenu si ještě nainstaluj Omarchy Megamenu z Mozilla Add-ons, ať můžeš ukládat stránku z lišty.",
+    statusBrowserHostSaved: "Firefox a Zen můžou ukládat stránky do Megamenu",
+    statusBrowserHostError: "Pomocníka pro prohlížeč se nepodařilo zaregistrovat: ",
     spacesMoreBtn: "Více",
     spacesDropdownHeader: "VŠECHNY PROSTORY",
     spacesAddAction: "+ Vytvořit nový prostor",
@@ -196,10 +210,12 @@ var STRINGS = {
     statusShortcutError: "Chyba zkratky: ",
 
     // Search & Filters
-    searchPlaceholder: "Hledat odkazy, příkazy, Omarchy akce, nebo '>' pro vše...",
+    searchPlaceholder: "Hledat ve všech prostorech, příkazy, Omarchy akce, nebo '>' pro apps...",
     filterAll: "Vše",
     filterFavorites: "★ Oblíbené",
     omarchyColumnName: "Omarchy & Aplikace",
+    otherSpaceBadge: "PROSTOR",
+    frequentHeader: "★ NEJČASTĚJŠÍ",
 
     // Orbit Section
     orbitHeader: "󱐋 QUICK ACCESS / PRIMARY ORBIT",

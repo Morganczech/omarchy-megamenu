@@ -1,6 +1,6 @@
 # Omarchy Megamenu (`gruut.megamenu`)
 
-A theme-aware Spotlight-style megamenu and bar widget for [Omarchy](https://omarchy.org/) featuring workspaces (**Spaces**), a 6-slot **Quick Access Orbit**, color-coded categories, live **RSS/Atom & GitHub columns**, web bookmarks with automatic favicons, built-in **Omarchy system actions & desktop app search**, saved **shell commands**, per-link browser selection, and one-click browser bookmark importing.
+A theme-aware Spotlight-style megamenu and bar widget for [Omarchy](https://omarchy.org/) featuring workspaces (**Spaces**), a 6-slot **Quick Access Orbit**, color-coded categories, live **RSS/Atom & GitHub columns**, web bookmarks with automatic favicons, built-in **Omarchy system actions & desktop app search**, saved **shell commands**, per-link browser selection, one-click browser bookmark importing, and a [Firefox / Zen add-on](https://addons.mozilla.org/firefox/addon/omarchy-megamenu/) to save the current page.
 
 ![Omarchy Megamenu preview](preview.png)
 
@@ -18,8 +18,10 @@ A theme-aware Spotlight-style megamenu and bar widget for [Omarchy](https://omar
   - Automatically adapts to the active Omarchy light/dark theme (`Color`, `Style`, `Border`, and semantic ANSI colors from `colors.toml`: `blue`, `cyan`, `green`, `magenta`, `yellow`, `orange`, `red`).
   - Responsive category filter badges under the search bar that center on a single row and wrap cleanly when you have many categories.
 - **Instant Search, Omarchy Spotlight Actions & Local App Launcher (`>`):**
-  - Type anywhere to filter bookmarks across spaces **and** simultaneously search native Omarchy system actions (`Style › Theme`, `Style › Background`, `System › Lock`, `Trigger › Capture › Screenshot`, `Setup › Monitors`, etc.) and installed `.desktop` applications.
+  - Type anywhere to filter bookmarks and commands across **all Spaces** (matches from other spaces appear in dedicated columns) **and** simultaneously search native Omarchy system actions (`Style › Theme`, `Style › Background`, `System › Lock`, `Trigger › Capture › Screenshot`, `Setup › Monitors`, etc.) and installed `.desktop` applications.
   - Prefix your query with **`>`** (e.g. `> theme`, `> ghostty`, `> restic`) to open the dedicated full-width Omarchy actions, applications, and saved-commands view, or pin any action/app into a Megamenu category.
+- **Frequent launches:**
+  - Opening Megamenu with an empty search shows a **Frequent** strip of your most-used bookmarks, apps, and commands (ranked by launch count).
 - **Shell commands:**
   - Add a command from the item dialog (`Ctrl+N`, then **Command**) into any category. Optional working directory, Orbit pin, and glyph icon work the same way as other items.
   - **Terminal** (default) opens the default Omarchy terminal via `xdg-terminal-exec`, runs the command with `bash -lc`, and waits for a key after it finishes. **Background** runs the same script with no window.
@@ -32,6 +34,9 @@ A theme-aware Spotlight-style megamenu and bar widget for [Omarchy](https://omar
 - **Browser Bookmark Importer:**
   - Automatically detects bookmark profiles from installed Chromium-based browsers (Brave, Chromium, Chrome, Vivaldi, Edge) and Firefox/Zen/LibreWolf (`places.sqlite`), as well as exported HTML files (`~/Downloads/bookmarks.html`).
   - Select which bookmark folders to import as color-coded categories into the active space.
+- **Save the current page (Firefox / Zen / Chrome):**
+  - Install the [Omarchy Megamenu](https://addons.mozilla.org/firefox/addon/omarchy-megamenu/) add-on in Firefox or Zen (Chrome can load `extension/` unpacked), then enable **Page save** in Megamenu so the local native-messaging helper can write bookmarks.
+  - The toolbar popup picks a space and category (**Seznam čtení** is seeded automatically). Megamenu reloads `data.json` the next time it opens.
 - **Opt-In Global Keyboard Shortcut (Spotlight Mode):**
   - Click the **`󰌌 Set shortcut`** button in the top bar of Megamenu to optionally bind a Hyprland shortcut (such as `SUPER + M` or `ALT + SPACE`) in `~/.config/hypr/bindings.lua` using Omaplug-compatible comment blocks.
   - Strictly opt-in: no user configuration files are modified without explicit user action.
@@ -79,7 +84,7 @@ omarchy-shell shell toggle gruut.megamenu
 
 | Key | Action |
 | --- | --- |
-| **Type text** | Filter bookmarks, commands, and apps in the active space |
+| **Type text** | Filter bookmarks and commands across all Spaces (plus Omarchy actions / apps) |
 | **`>` + query** | Search and launch Omarchy actions, installed applications, and saved commands |
 | **`1` – `6`** | Launch pinned Quick Access Orbit slot `1–6` (when search is empty) |
 | **`Tab` / `Shift+Tab`** | Switch to next / previous Space |
@@ -89,6 +94,39 @@ omarchy-shell shell toggle gruut.megamenu
 | **`Alt+E`** | Edit selected item |
 | **`Ctrl+N`** | Add new bookmark, command, or local application |
 | **`Esc`** | Close modal / context menu / Megamenu |
+
+### Save the current page
+
+Two pieces are required: the **browser extension** (saves the tab) and the **local native-messaging host** (writes into Megamenu’s `data.json`). Neither works alone.
+
+#### 1. Install the extension
+
+- **Firefox / Zen (recommended):** [Omarchy Megamenu on Mozilla Add-ons](https://addons.mozilla.org/firefox/addon/omarchy-megamenu/)  
+  Czech listing: [addons.mozilla.org/cs/…](https://addons.mozilla.org/cs/firefox/addon/omarchy-megamenu/)
+- **Temporary / unpacked (dev):** load `extension/manifest.json` via `about:debugging` → This Firefox → Load Temporary Add-on
+- **Chrome / Chromium / Brave:** `chrome://extensions` → Developer mode → Load unpacked → `extension/`
+
+#### 2. Register the local helper
+
+Open Megamenu and click **Page save** / **Ukládání stránek** in the top bar (hover explains that the add-on is still required). Or from a terminal:
+
+```bash
+python3 ~/.config/omarchy/plugins/gruut.megamenu/scripts/install-browser-host.py --firefox-only
+```
+
+From this checkout:
+
+```bash
+python3 scripts/install-browser-host.py --firefox-only
+```
+
+When the button shows **Page save on** / **Ukládání zapnuto**, Firefox and Zen can talk to `scripts/native-host.py`.
+
+#### Using it
+
+The toolbar button shows the page title, then a space (**Seznam čtení** first) and a category. Saving the same URL into the same space again does not create a duplicate. Favicons are fetched the next time Megamenu opens.
+
+`python3 scripts/install-browser-host.py --remove` deletes the host registration. It does not remove the extension from the browser.
 
 ### Add a shell command
 
@@ -133,7 +171,7 @@ python3 ~/.config/omarchy/plugins/gruut.megamenu/scripts/add-command.py \
 
 - **Omarchy 4.x** (`quickshell` runtime, Hyprland, and `omarchy` CLI)
 - **Standard system utilities included with Omarchy:**
-  - `python3` (standard library `sqlite3`, `json`, `html.parser` for bookmark importing and opt-in shortcut management)
+  - `python3` (standard library `sqlite3`, `json`, `html.parser` for bookmark importing, opt-in shortcut management, and the browser save host)
   - `curl` (caches website favicons into `~/.local/share/omarchy-megamenu/favicons/`)
   - `wl-copy` (copies URLs and Desktop IDs to the Wayland clipboard)
   - `xdg-open` and `gtk-launch` (launches URLs and `.desktop` applications)

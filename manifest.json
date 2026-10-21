@@ -2,11 +2,11 @@
   "schemaVersion": 1,
   "id": "gruut.megamenu",
   "name": "Omarchy Megamenu",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "author": "Morganczech",
   "license": "MIT",
   "homepage": "https://github.com/Morganczech/omarchy-megamenu",
-  "description": "Theme-aware megamenu with spaces, quick access orbit, colored categories, bookmarks & local apps, browser chooser, and bookmark importer.",
+  "description": "Theme-aware megamenu with spaces, quick access orbit, colored categories, bookmarks & local apps, browser page save, and bookmark importer.",
   "kinds": [
     "menu",
     "bar-widget"
