@@ -17,10 +17,13 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 
-USER_AGENT = "Omarchy-Megamenu/1.1 (+https://github.com/Morganczech/omarchy-megamenu)"
+USER_AGENT = "Omarchy-Megamenu/1.1.1 (+https://github.com/Morganczech/omarchy-megamenu)"
 DEFAULT_TTL_SECONDS = 600  # 10 minutes
 MAX_ITEMS_PER_FEED = 48
 GITHUB_ISSUES_PAGE_SIZE = 100
+MAX_RESPONSE_BYTES = 2_000_000  # 2 MiB per remote response
+TRANSFER_DEADLINE_SECONDS = 8
+HTTP_READ_CHUNK_BYTES = 65536
 
 
 def ensure_private_dir(path: Path) -> None:
@@ -122,8 +125,36 @@ def http_get(url, accept="application/xml, text/xml, application/atom+xml, appli
             "Accept": accept,
         },
     )
-    with urllib.request.urlopen(req, timeout=8) as resp:
-        return resp.read().decode("utf-8", errors="replace")
+    deadline = time.monotonic() + TRANSFER_DEADLINE_SECONDS
+    with urllib.request.urlopen(req, timeout=TRANSFER_DEADLINE_SECONDS) as resp:
+        content_length = resp.headers.get("Content-Length")
+        if content_length is not None:
+            try:
+                declared = int(str(content_length).strip())
+            except ValueError:
+                declared = -1
+            if declared > MAX_RESPONSE_BYTES:
+                raise ValueError(
+                    f"response Content-Length {declared} exceeds {MAX_RESPONSE_BYTES} byte limit"
+                )
+
+        chunks = []
+        total = 0
+        while True:
+            if time.monotonic() > deadline:
+                raise TimeoutError(
+                    f"transfer exceeded {TRANSFER_DEADLINE_SECONDS}s deadline"
+                )
+            chunk = resp.read(HTTP_READ_CHUNK_BYTES)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_RESPONSE_BYTES:
+                raise ValueError(
+                    f"response exceeded {MAX_RESPONSE_BYTES} byte limit"
+                )
+            chunks.append(chunk)
+        return b"".join(chunks).decode("utf-8", errors="replace")
 
 
 def local_tag(tag):
