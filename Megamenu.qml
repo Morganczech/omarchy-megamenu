@@ -2001,7 +2001,9 @@ Item {
             Button {
               text: root.browserHostRegistered ? root.tr("browserHostBtnOn") : root.tr("browserHostBtn")
               bordered: true
-              tooltipText: root.tr("browserHostTooltip")
+              tooltipText: root.browserHostRegistered
+                ? root.tr("browserHostTooltipOn")
+                : root.tr("browserHostTooltip")
               onClicked: root.registerBrowserHost()
             }
 

@@ -1,6 +1,6 @@
 # Omarchy Megamenu (`gruut.megamenu`)
 
-A theme-aware Spotlight-style megamenu and bar widget for [Omarchy](https://omarchy.org/) featuring workspaces (**Spaces**), a 6-slot **Quick Access Orbit**, color-coded categories, live **RSS/Atom & GitHub columns**, web bookmarks with automatic favicons, built-in **Omarchy system actions & desktop app search**, saved **shell commands**, per-link browser selection, and one-click browser bookmark importing.
+A theme-aware Spotlight-style megamenu and bar widget for [Omarchy](https://omarchy.org/) featuring workspaces (**Spaces**), a 6-slot **Quick Access Orbit**, color-coded categories, live **RSS/Atom & GitHub columns**, web bookmarks with automatic favicons, built-in **Omarchy system actions & desktop app search**, saved **shell commands**, per-link browser selection, one-click browser bookmark importing, and a [Firefox / Zen add-on](https://addons.mozilla.org/firefox/addon/omarchy-megamenu/) to save the current page.
 
 ![Omarchy Megamenu preview](preview.png)
 
@@ -35,8 +35,8 @@ A theme-aware Spotlight-style megamenu and bar widget for [Omarchy](https://omar
   - Automatically detects bookmark profiles from installed Chromium-based browsers (Brave, Chromium, Chrome, Vivaldi, Edge) and Firefox/Zen/LibreWolf (`places.sqlite`), as well as exported HTML files (`~/Downloads/bookmarks.html`).
   - Select which bookmark folders to import as color-coded categories into the active space.
 - **Save the current page (Firefox / Zen / Chrome):**
-  - A small extension saves the tab you are looking at into a space and category you pick. **Seznam čtení** is seeded automatically for pages you want to come back to.
-  - The browser cannot write `data.json` itself. A local native-messaging host does the write, and Megamenu reloads that file the next time it opens.
+  - Install the [Omarchy Megamenu](https://addons.mozilla.org/firefox/addon/omarchy-megamenu/) add-on in Firefox or Zen (Chrome can load `extension/` unpacked), then enable **Page save** in Megamenu so the local native-messaging helper can write bookmarks.
+  - The toolbar popup picks a space and category (**Seznam čtení** is seeded automatically). Megamenu reloads `data.json` the next time it opens.
 - **Opt-In Global Keyboard Shortcut (Spotlight Mode):**
   - Click the **`󰌌 Set shortcut`** button in the top bar of Megamenu to optionally bind a Hyprland shortcut (such as `SUPER + M` or `ALT + SPACE`) in `~/.config/hypr/bindings.lua` using Omaplug-compatible comment blocks.
   - Strictly opt-in: no user configuration files are modified without explicit user action.
@@ -97,26 +97,36 @@ omarchy-shell shell toggle gruut.megamenu
 
 ### Save the current page
 
-The extension lives in `extension/` and talks to `scripts/native-host.py`. Open Megamenu and click **Page save** / **Ukládání stránek** in the top bar. That registers the local helper for Firefox and Zen. From a terminal:
+Two pieces are required: the **browser extension** (saves the tab) and the **local native-messaging host** (writes into Megamenu’s `data.json`). Neither works alone.
+
+#### 1. Install the extension
+
+- **Firefox / Zen (recommended):** [Omarchy Megamenu on Mozilla Add-ons](https://addons.mozilla.org/firefox/addon/omarchy-megamenu/)  
+  Czech listing: [addons.mozilla.org/cs/…](https://addons.mozilla.org/cs/firefox/addon/omarchy-megamenu/)
+- **Temporary / unpacked (dev):** load `extension/manifest.json` via `about:debugging` → This Firefox → Load Temporary Add-on
+- **Chrome / Chromium / Brave:** `chrome://extensions` → Developer mode → Load unpacked → `extension/`
+
+#### 2. Register the local helper
+
+Open Megamenu and click **Page save** / **Ukládání stránek** in the top bar (hover explains that the add-on is still required). Or from a terminal:
 
 ```bash
 python3 ~/.config/omarchy/plugins/gruut.megamenu/scripts/install-browser-host.py --firefox-only
 ```
 
-Or from this checkout:
+From this checkout:
 
 ```bash
 python3 scripts/install-browser-host.py --firefox-only
 ```
 
-Load `extension/` as an add-on (or install the approved Firefox listing):
+When the button shows **Page save on** / **Ukládání zapnuto**, Firefox and Zen can talk to `scripts/native-host.py`.
 
-- **Firefox / Zen:** install from Mozilla Add-ons, or temporarily via `about:debugging` → This Firefox → Load Temporary Add-on → `extension/manifest.json`
-- **Chrome / Chromium / Brave:** `chrome://extensions` → Developer mode → Load unpacked → `extension/`
+#### Using it
 
 The toolbar button shows the page title, then a space (**Seznam čtení** first) and a category. Saving the same URL into the same space again does not create a duplicate. Favicons are fetched the next time Megamenu opens.
 
-`python3 scripts/install-browser-host.py --remove` deletes the host registration. It does not remove the extension.
+`python3 scripts/install-browser-host.py --remove` deletes the host registration. It does not remove the extension from the browser.
 
 ### Add a shell command
 
