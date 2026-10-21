@@ -130,6 +130,7 @@ Item {
 
   // Global Shortcut Modal state (strictly opt-in; read-only status check on startup)
   property string currentGlobalShortcut: ""
+  property bool browserHostRegistered: false
   property string formShortcutCombo: "SUPER + M"
 
   // Theme-bound surface tokens from qs.Commons
@@ -299,7 +300,11 @@ Item {
     if (!appIconScanProc.running) appIconScanProc.running = true
     root.refreshBrowsers()
     root.applyGlobalShortcut("", "status")
-    root.refreshLiveFeeds(false, "")
+    // Plugin stays loaded, so pick up pages saved by the browser host since the last open.
+    // hydrateData() refreshes live feeds after the file loads.
+    if (root.dirReady) dataFile.reload()
+    else root.refreshLiveFeeds(false, "")
+    root.refreshBrowserHostStatus()
     root.ensureSelectedValid()
     Qt.callLater(function() {
       if (searchInput) searchInput.forceActiveFocus()
@@ -378,26 +383,57 @@ Item {
     root.commitData(next)
   }
 
+  function spaceNameKey(name) {
+    return String(name || "").trim().toLowerCase()
+  }
+
+  function isReadingListSpace(space) {
+    if (!space) return false
+    if (space.id === "reading-list") return true
+    var name = root.spaceNameKey(space.name)
+    return name === "seznam čtení" || name === "reading list"
+  }
+
+  // Copy missing shipped spaces (and their categories) onto an existing data file.
+  // Returns true when parsed was changed.
+  function ensureSeedSpaces(parsed) {
+    var def = Storage.defaultData()
+    var seedIds = ["live-pulse", "reading-list"]
+    var changed = false
+    for (var si = 0; si < seedIds.length; si++) {
+      var seedId = seedIds[si]
+      var present = false
+      for (var s = 0; s < parsed.spaces.length; s++) {
+        var existing = parsed.spaces[s]
+        if (existing.id === seedId || (seedId === "reading-list" && root.isReadingListSpace(existing))) {
+          present = true
+          break
+        }
+      }
+      if (present) continue
+      for (var ds = 0; ds < def.spaces.length; ds++) {
+        if (def.spaces[ds].id === seedId) {
+          parsed.spaces.push(def.spaces[ds])
+          changed = true
+        }
+      }
+      for (var dc = 0; dc < def.categories.length; dc++) {
+        if (def.categories[dc].spaceId === seedId) {
+          parsed.categories.push(def.categories[dc])
+          changed = true
+        }
+      }
+    }
+    return changed
+  }
+
   function hydrateData(rawText) {
     var hasExisting = rawText && String(rawText).trim().length > 0
     var parsed = Storage.parse(rawText)
 
-    // Ensure the default "live-pulse" showcase space exists so users upgrading get Live Feeds out of the box
-    var hasLivePulse = false
-    for (var s = 0; s < parsed.spaces.length; s++) {
-      if (parsed.spaces[s].id === "live-pulse") {
-        hasLivePulse = true
-        break
-      }
-    }
-    if (hasExisting && !hasLivePulse) {
-      var def = Storage.defaultData()
-      for (var ds = 0; ds < def.spaces.length; ds++) {
-        if (def.spaces[ds].id === "live-pulse") parsed.spaces.push(def.spaces[ds])
-      }
-      for (var dc = 0; dc < def.categories.length; dc++) {
-        if (def.categories[dc].spaceId === "live-pulse") parsed.categories.push(def.categories[dc])
-      }
+    // Keep shipped spaces present for existing data files. A renamed reading list
+    // (same id, or the name "Seznam čtení" / "Reading List") is left alone.
+    if (hasExisting && root.ensureSeedSpaces(parsed)) {
       dataFile.setText(Storage.serialize(parsed))
     }
 
@@ -1088,6 +1124,31 @@ Item {
     root.activeModal = "shortcut"
   }
 
+  function refreshBrowserHostStatus() {
+    if (browserHostProc.running) return
+    browserHostProc.pendingMode = "status"
+    browserHostProc.command = [
+      "python3",
+      root.pluginDir + "/scripts/install-browser-host.py",
+      "--status",
+      "--firefox-only",
+      "--json"
+    ]
+    browserHostProc.running = true
+  }
+
+  function registerBrowserHost() {
+    if (browserHostProc.running && browserHostProc.pendingMode === "register") return
+    browserHostProc.pendingMode = "register"
+    browserHostProc.command = [
+      "python3",
+      root.pluginDir + "/scripts/install-browser-host.py",
+      "--firefox-only",
+      "--json"
+    ]
+    browserHostProc.running = true
+  }
+
   function applyGlobalShortcut(comboValue, mode) {
     shortcutManageProc.pendingMode = mode || "replace"
     shortcutManageProc.command = [
@@ -1489,6 +1550,38 @@ Item {
     interval: 2800
     repeat: false
     onTriggered: root.statusBannerText = ""
+  }
+
+  Process {
+    id: browserHostProc
+    property string pendingMode: "status"
+    running: false
+    stdout: StdioCollector {
+      id: browserHostOut
+      waitForEnd: true
+    }
+    stderr: StdioCollector {
+      id: browserHostErr
+      waitForEnd: true
+    }
+    onExited: {
+      var raw = String(browserHostOut.text || "").trim()
+      var res = null
+      try {
+        res = JSON.parse(raw)
+      } catch (e) {}
+      if (res && res.ok) {
+        root.browserHostRegistered = res.registered === true
+        if (browserHostProc.pendingMode === "register") {
+          root.showStatus(root.tr("statusBrowserHostSaved"))
+        }
+        return
+      }
+      if (browserHostProc.pendingMode === "register") {
+        var detail = (res && res.error) ? res.error : String(browserHostErr.text || "").trim()
+        root.showStatus(root.tr("statusBrowserHostError") + (detail || "unknown error"))
+      }
+    }
   }
 
   Process {
@@ -1906,6 +1999,13 @@ Item {
             }
 
             Button {
+              text: root.browserHostRegistered ? root.tr("browserHostBtnOn") : root.tr("browserHostBtn")
+              bordered: true
+              tooltipText: root.tr("browserHostTooltip")
+              onClicked: root.registerBrowserHost()
+            }
+
+            Button {
               text: "󰗊 " + root.activeLang.toUpperCase() + (root.languagePref === "auto" ? " (A)" : "")
               bordered: true
               tooltipText: root.tr("langTooltip")
@@ -1948,7 +2048,7 @@ Item {
         Column {
           id: searchSection
           width: parent.width
-          spacing: Style.spacing.sm
+          spacing: Style.space(14)
 
           // Search Box Container
           Rectangle {
@@ -2573,6 +2673,7 @@ Item {
           height: parent.height
                   - topHeader.height
                   - searchSection.height
+                  - (frequentSection.visible ? frequentSection.height + Style.spacing.md : 0)
                   - (orbitSection.visible ? orbitSection.height + Style.spacing.md : 0)
                   - footerBar.height
                   - Style.spacing.md * 3

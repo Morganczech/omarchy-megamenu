@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Save to Megamenu</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <p class="eyebrow" id="eyebrow">Save to Megamenu</p>
+    <h1 id="page-title">…</h1>
+    <p class="url" id="page-url"></p>
+  </header>
+  <form id="save-form">
+    <label for="space">Space</label>
+    <select id="space" name="space" required></select>
+    <label for="category">Category</label>
+    <select id="category" name="category"></select>
+    <button type="submit" id="save">Save page</button>
+  </form>
+  <p class="status" id="status" role="status"></p>
+  <script src="popup.js"></script>
+</body>
+</html>

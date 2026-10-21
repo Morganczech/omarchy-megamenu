@@ -34,6 +34,9 @@ A theme-aware Spotlight-style megamenu and bar widget for [Omarchy](https://omar
 - **Browser Bookmark Importer:**
   - Automatically detects bookmark profiles from installed Chromium-based browsers (Brave, Chromium, Chrome, Vivaldi, Edge) and Firefox/Zen/LibreWolf (`places.sqlite`), as well as exported HTML files (`~/Downloads/bookmarks.html`).
   - Select which bookmark folders to import as color-coded categories into the active space.
+- **Save the current page (Firefox / Zen / Chrome):**
+  - A small extension saves the tab you are looking at into a space and category you pick. **Seznam čtení** is seeded automatically for pages you want to come back to.
+  - The browser cannot write `data.json` itself. A local native-messaging host does the write, and Megamenu reloads that file the next time it opens.
 - **Opt-In Global Keyboard Shortcut (Spotlight Mode):**
   - Click the **`󰌌 Set shortcut`** button in the top bar of Megamenu to optionally bind a Hyprland shortcut (such as `SUPER + M` or `ALT + SPACE`) in `~/.config/hypr/bindings.lua` using Omaplug-compatible comment blocks.
   - Strictly opt-in: no user configuration files are modified without explicit user action.
@@ -92,6 +95,29 @@ omarchy-shell shell toggle gruut.megamenu
 | **`Ctrl+N`** | Add new bookmark, command, or local application |
 | **`Esc`** | Close modal / context menu / Megamenu |
 
+### Save the current page
+
+The extension lives in `extension/` and talks to `scripts/native-host.py`. Open Megamenu and click **Page save** / **Ukládání stránek** in the top bar. That registers the local helper for Firefox and Zen. From a terminal:
+
+```bash
+python3 ~/.config/omarchy/plugins/gruut.megamenu/scripts/install-browser-host.py --firefox-only
+```
+
+Or from this checkout:
+
+```bash
+python3 scripts/install-browser-host.py --firefox-only
+```
+
+Load `extension/` as an add-on (or install the approved Firefox listing):
+
+- **Firefox / Zen:** install from Mozilla Add-ons, or temporarily via `about:debugging` → This Firefox → Load Temporary Add-on → `extension/manifest.json`
+- **Chrome / Chromium / Brave:** `chrome://extensions` → Developer mode → Load unpacked → `extension/`
+
+The toolbar button shows the page title, then a space (**Seznam čtení** first) and a category. Saving the same URL into the same space again does not create a duplicate. Favicons are fetched the next time Megamenu opens.
+
+`python3 scripts/install-browser-host.py --remove` deletes the host registration. It does not remove the extension.
+
 ### Add a shell command
 
 Megamenu stores the command text in your menu data. It does not create or keep a script file for you. Type a short command directly, or point at a script you have already saved.
@@ -135,7 +161,7 @@ python3 ~/.config/omarchy/plugins/gruut.megamenu/scripts/add-command.py \
 
 - **Omarchy 4.x** (`quickshell` runtime, Hyprland, and `omarchy` CLI)
 - **Standard system utilities included with Omarchy:**
-  - `python3` (standard library `sqlite3`, `json`, `html.parser` for bookmark importing and opt-in shortcut management)
+  - `python3` (standard library `sqlite3`, `json`, `html.parser` for bookmark importing, opt-in shortcut management, and the browser save host)
   - `curl` (caches website favicons into `~/.local/share/omarchy-megamenu/favicons/`)
   - `wl-copy` (copies URLs and Desktop IDs to the Wayland clipboard)
   - `xdg-open` and `gtk-launch` (launches URLs and `.desktop` applications)

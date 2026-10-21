@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "Omarchy Megamenu",
+  "version": "1.0.0",
+  "description": "Save the current page into an Omarchy Megamenu space.",
+  "permissions": ["nativeMessaging", "activeTab", "storage"],
+  "action": {
+    "default_title": "Save to Megamenu",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "megamenu@gruut",
+      "strict_min_version": "140.0",
+      "data_collection_permissions": {
+        "required": ["browsingActivity", "websiteContent"]
+      }
+    },
+    "gecko_android": {
+      "strict_min_version": "142.0"
+    }
+  },
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAz/aBatPsjbpbtSUKi/wHrnE1URNN7yfedlkww/ubWSXdU8BDtcmcFWFDN0n7LcqXf+JmrUpofSbnqYuWKeZjmBcmvtyvddf4bwxIpkHHAH+AvE/9rGykVd2H8QyNPcPWeKFoQm2vllyDu3weVn63X8larcdSt4HqlBrq9LzZQqixaYgZZIxIHcHPE+iW7WNUzNUJzLJSmfVxMgasa59XYuRDQtnrTO934L3XI+ovfJpRb9nqicZBx8j3YhAMnBpQoqQ1LJCAM9Jg7A/Ga/tFkUAPJWs8Iho+1yOPIsVsLf8l0Auxpscr0T7iiEfR2du5sy77sV0KplYb3sR/DMzP7QIDAQAB"
+}
