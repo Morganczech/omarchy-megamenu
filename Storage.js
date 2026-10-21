@@ -451,6 +451,14 @@ function sanitizeItem(raw, fallbackSpaceId, fallbackCategoryId) {
   var pinned = Number(raw.pinnedSlot || 0)
   if (!isFinite(pinned) || pinned < 0 || pinned > 6) pinned = 0
 
+  var launchCount = Number(raw.launchCount || 0)
+  if (!isFinite(launchCount) || launchCount < 0) launchCount = 0
+  launchCount = Math.round(launchCount)
+
+  var lastLaunchedAt = Number(raw.lastLaunchedAt || 0)
+  if (!isFinite(lastLaunchedAt) || lastLaunchedAt < 0) lastLaunchedAt = 0
+  lastLaunchedAt = Math.round(lastLaunchedAt)
+
   var iconType = String(raw.iconType || "")
   if (!iconType) {
     iconType = type === "app" ? "system" : (type === "command" ? "glyph" : "favicon")
@@ -478,7 +486,9 @@ function sanitizeItem(raw, fallbackSpaceId, fallbackCategoryId) {
     favorite: raw.favorite === true,
     pinnedSlot: Math.round(pinned),
     badgeText: plainTextLabel(raw.badgeText),
-    colorRole: String(raw.colorRole !== undefined && raw.colorRole !== null ? raw.colorRole : "")
+    colorRole: String(raw.colorRole !== undefined && raw.colorRole !== null ? raw.colorRole : ""),
+    launchCount: launchCount,
+    lastLaunchedAt: lastLaunchedAt
   }
 }
 
@@ -711,6 +721,79 @@ function filterItems(data, spaceId, filterId, query, liveFeedsMap) {
     if (filterId && filterId !== "all" && filterId !== "favorites" && item.categoryId !== filterId) continue
     if (!matchesItemQuery(item, q)) continue
     out.push(item)
+  }
+  return out
+}
+
+function recordLaunch(data, itemId) {
+  var next = cloneData(data)
+  var id = String(itemId || "")
+  if (!id) return next
+  for (var i = 0; i < next.items.length; i++) {
+    if (next.items[i].id !== id) continue
+    var count = Number(next.items[i].launchCount || 0)
+    if (!isFinite(count) || count < 0) count = 0
+    next.items[i].launchCount = Math.round(count) + 1
+    next.items[i].lastLaunchedAt = Date.now()
+    break
+  }
+  return next
+}
+
+function frequentItems(data, limit) {
+  var items = (data && Array.isArray(data.items)) ? data.items : []
+  var max = (limit && limit > 0) ? limit : 8
+  var scored = []
+  for (var i = 0; i < items.length; i++) {
+    var it = items[i]
+    if (!it) continue
+    var count = Number(it.launchCount || 0)
+    if (!isFinite(count) || count <= 0) continue
+    scored.push(it)
+  }
+  scored.sort(function(a, b) {
+    var ca = Number(a.launchCount || 0)
+    var cb = Number(b.launchCount || 0)
+    if (cb !== ca) return cb - ca
+    var ta = Number(a.lastLaunchedAt || 0)
+    var tb = Number(b.lastLaunchedAt || 0)
+    return tb - ta
+  })
+  return scored.slice(0, max)
+}
+
+function otherSpaceSearchGroups(data, activeSpaceId, filteredItems) {
+  var spaces = (data && Array.isArray(data.spaces)) ? data.spaces : []
+  var spaceMap = {}
+  for (var s = 0; s < spaces.length; s++) {
+    if (spaces[s] && spaces[s].id) spaceMap[String(spaces[s].id)] = spaces[s]
+  }
+  var active = String(activeSpaceId || "")
+  var order = []
+  var groups = {}
+  var list = Array.isArray(filteredItems) ? filteredItems : []
+  for (var i = 0; i < list.length; i++) {
+    var item = list[i]
+    if (!item) continue
+    if (item.isSystemResult || item.isLoadMore) continue
+    var sid = String(item.spaceId || "")
+    if (!sid || sid === active) continue
+    if (!groups[sid]) {
+      groups[sid] = []
+      order.push(sid)
+    }
+    groups[sid].push(item)
+  }
+  var out = []
+  for (var o = 0; o < order.length; o++) {
+    var id = order[o]
+    var sp = spaceMap[id]
+    out.push({
+      spaceId: id,
+      name: sp ? String(sp.name || id) : id,
+      icon: sp ? String(sp.icon || "󰀻") : "󰀻",
+      items: groups[id]
+    })
   }
   return out
 }
@@ -960,6 +1043,10 @@ function upsertItem(data, itemPayload) {
     if (next.items[findPrev].id === clean.id) {
       previousSpaceId = next.items[findPrev].spaceId
       previousCategoryId = next.items[findPrev].categoryId
+      if (itemPayload.launchCount === undefined && itemPayload.lastLaunchedAt === undefined) {
+        clean.launchCount = Number(next.items[findPrev].launchCount || 0) || 0
+        clean.lastLaunchedAt = Number(next.items[findPrev].lastLaunchedAt || 0) || 0
+      }
       break
     }
   }
@@ -1295,6 +1382,9 @@ if (typeof module !== "undefined") {
     bashSingleQuote: bashSingleQuote,
     commandShellScript: commandShellScript,
     filterItems: filterItems,
+    recordLaunch: recordLaunch,
+    frequentItems: frequentItems,
+    otherSpaceSearchGroups: otherSpaceSearchGroups,
     normalizeDesktopId: normalizeDesktopId,
     searchDesktopEntries: searchDesktopEntries,
     parseOmarchyMenuJsonc: parseOmarchyMenuJsonc,

@@ -18,8 +18,10 @@ A theme-aware Spotlight-style megamenu and bar widget for [Omarchy](https://omar
   - Automatically adapts to the active Omarchy light/dark theme (`Color`, `Style`, `Border`, and semantic ANSI colors from `colors.toml`: `blue`, `cyan`, `green`, `magenta`, `yellow`, `orange`, `red`).
   - Responsive category filter badges under the search bar that center on a single row and wrap cleanly when you have many categories.
 - **Instant Search, Omarchy Spotlight Actions & Local App Launcher (`>`):**
-  - Type anywhere to filter bookmarks across spaces **and** simultaneously search native Omarchy system actions (`Style › Theme`, `Style › Background`, `System › Lock`, `Trigger › Capture › Screenshot`, `Setup › Monitors`, etc.) and installed `.desktop` applications.
+  - Type anywhere to filter bookmarks and commands across **all Spaces** (matches from other spaces appear in dedicated columns) **and** simultaneously search native Omarchy system actions (`Style › Theme`, `Style › Background`, `System › Lock`, `Trigger › Capture › Screenshot`, `Setup › Monitors`, etc.) and installed `.desktop` applications.
   - Prefix your query with **`>`** (e.g. `> theme`, `> ghostty`, `> restic`) to open the dedicated full-width Omarchy actions, applications, and saved-commands view, or pin any action/app into a Megamenu category.
+- **Frequent launches:**
+  - Opening Megamenu with an empty search shows a **Frequent** strip of your most-used bookmarks, apps, and commands (ranked by launch count).
 - **Shell commands:**
   - Add a command from the item dialog (`Ctrl+N`, then **Command**) into any category. Optional working directory, Orbit pin, and glyph icon work the same way as other items.
   - **Terminal** (default) opens the default Omarchy terminal via `xdg-terminal-exec`, runs the command with `bash -lc`, and waits for a key after it finishes. **Background** runs the same script with no window.
@@ -79,7 +81,7 @@ omarchy-shell shell toggle gruut.megamenu
 
 | Key | Action |
 | --- | --- |
-| **Type text** | Filter bookmarks, commands, and apps in the active space |
+| **Type text** | Filter bookmarks and commands across all Spaces (plus Omarchy actions / apps) |
 | **`>` + query** | Search and launch Omarchy actions, installed applications, and saved commands |
 | **`1` – `6`** | Launch pinned Quick Access Orbit slot `1–6` (when search is empty) |
 | **`Tab` / `Shift+Tab`** | Switch to next / previous Space |

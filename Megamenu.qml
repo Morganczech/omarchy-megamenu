@@ -150,6 +150,7 @@ Item {
   readonly property var currentSpaceItems: Storage.itemsForSpace(root.data, root.activeSpaceId)
   readonly property var pinnedOrbit: Storage.pinnedOrbitForSpace(root.data, root.activeSpaceId)
   readonly property var filteredFlatItems: Storage.filterItems(root.data, root.activeSpaceId, root.activeFilter, root.searchQuery, root.liveFeedsMap)
+  readonly property var frequentItems: Storage.frequentItems(root.data, 8)
   readonly property bool isCommandMode: root.searchQuery.trim().indexOf(">") === 0
   readonly property var matchedSystemApps: {
     if (!root.isCommandMode) return []
@@ -416,12 +417,48 @@ Item {
     if ((cat && cat.type === "omarchy") || catId === "__omarchy_system__") {
       return root.searchSystemColumnItems || []
     }
+    if (cat && cat.type === "other-space") {
+      var sid = String(cat.spaceId || "")
+      var allOther = root.filteredFlatItems || []
+      var otherList = []
+      for (var o = 0; o < allOther.length; o++) {
+        if (allOther[o].spaceId === sid) otherList.push(allOther[o])
+      }
+      return otherList
+    }
     var all = root.filteredFlatItems || []
     var list = []
     for (var i = 0; i < all.length; i++) {
       if (all[i].categoryId === catId) list.push(all[i])
     }
     return list
+  }
+
+  function otherSpaceCategoryEntries() {
+    var q = String(root.searchQuery || "").trim()
+    if (!q || root.isCommandMode) return []
+    if (root.activeFilter !== "all" && root.activeFilter !== "favorites") return []
+    var groups = Storage.otherSpaceSearchGroups(root.data, root.activeSpaceId, root.filteredFlatItems)
+    var out = []
+    for (var i = 0; i < groups.length; i++) {
+      var g = groups[i]
+      out.push({
+        id: "__other_space__" + g.spaceId,
+        spaceId: g.spaceId,
+        name: g.name,
+        icon: g.icon || "󰀻",
+        colorRole: "magenta",
+        type: "other-space"
+      })
+    }
+    return out
+  }
+
+  function bumpLaunchStats(item) {
+    if (!item || !item.id) return
+    if (item.isSystemResult || item.isLiveItem || item.isLoadMore) return
+    var next = Storage.recordLaunch(root.data, item.id)
+    root.commitData(next)
   }
 
   function liveVisibleLimit(catId) {
@@ -474,6 +511,14 @@ Item {
       var colItems = root.visibleColumnItems(cat)
       if (colItems.length > 0) {
         cols.push({ category: cat, items: colItems })
+      }
+    }
+    var otherCats = root.otherSpaceCategoryEntries()
+    for (var o = 0; o < otherCats.length; o++) {
+      var otherCat = otherCats[o]
+      var otherItems = root.itemsForCategory(otherCat)
+      if (otherItems.length > 0) {
+        cols.push({ category: otherCat, items: otherItems })
       }
     }
     var sysItems = root.searchSystemColumnItems || []
@@ -692,6 +737,7 @@ Item {
 
   function launchItemDefault(item) {
     if (!item) return
+    root.bumpLaunchStats(item)
     root.dismiss()
     if (item.type === "app") {
       root.launchDesktopApp(item.desktopId, item.title)
@@ -704,6 +750,7 @@ Item {
 
   function launchItemInBrowser(item, browser) {
     if (!item || !item.url || !browser || !browser.exec) return
+    root.bumpLaunchStats(item)
     root.dismiss()
     Util.execDetached("uwsm-app -- " + browser.exec + " " + Util.shellQuote(item.url))
   }
@@ -2177,6 +2224,107 @@ Item {
         }
 
         // ============================================================
+        // 3a. FREQUENT (usage-ranked, empty search only)
+        // ============================================================
+        Column {
+          id: frequentSection
+          width: parent.width
+          spacing: Style.space(6)
+          visible: !root.isCommandMode
+                   && root.searchQuery.trim().length === 0
+                   && root.frequentItems.length > 0
+
+          Item {
+            width: parent.width
+            height: Style.space(18)
+
+            Text {
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+              text: root.tr("frequentHeader")
+              color: root.roleColor("yellow")
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: true
+            }
+          }
+
+          Row {
+            id: frequentRow
+            width: parent.width
+            spacing: Style.space(8)
+
+            Repeater {
+              model: root.frequentItems
+
+              delegate: Rectangle {
+                required property var modelData
+                readonly property color freqAccent: root.itemAccentColor(modelData, "yellow")
+                width: Math.min(
+                  Style.space(160),
+                  Math.max(
+                    Style.space(110),
+                    (frequentRow.width - Style.space(8) * Math.max(0, root.frequentItems.length - 1)) / Math.max(1, root.frequentItems.length)
+                  )
+                )
+                height: Style.space(40)
+                radius: Style.cornerRadius > 0 ? Math.max(5, Style.cornerRadius - 1) : 5
+                color: freqMouse.containsMouse
+                  ? Util.alpha(freqAccent, 0.18)
+                  : Util.alpha(root.foreground, 0.04)
+                border.width: 1
+                border.color: freqMouse.containsMouse
+                  ? Util.alpha(freqAccent, 0.55)
+                  : Util.alpha(root.foreground, 0.12)
+
+                Row {
+                  anchors.fill: parent
+                  anchors.leftMargin: Style.space(8)
+                  anchors.rightMargin: Style.space(8)
+                  spacing: Style.space(8)
+
+                  ItemIconBadge {
+                    itemData: modelData
+                    fallbackRole: "yellow"
+                    activeHighlight: freqMouse.containsMouse
+                    boxSize: Style.space(24)
+                    anchors.verticalCenter: parent.verticalCenter
+                  }
+
+                  Text {
+                    width: Math.max(Style.space(40), parent.width - Style.space(32))
+                    anchors.verticalCenter: parent.verticalCenter
+                    elide: Text.ElideRight
+                    textFormat: Text.PlainText
+                    text: modelData.title || ""
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+                  }
+                }
+
+                MouseArea {
+                  id: freqMouse
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  acceptedButtons: Qt.LeftButton | Qt.RightButton
+                  onClicked: function(mouse) {
+                    if (mouse.button === Qt.RightButton) {
+                      var pos = freqMouse.mapToItem(card, mouse.x, mouse.y)
+                      root.openContextMenuFor(modelData, pos.x, pos.y)
+                    } else {
+                      root.launchItemDefault(modelData)
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        // ============================================================
         // 3. QUICK ACCESS / PRIMARY ORBIT [1 - 6]
         // ============================================================
         Column {
@@ -2455,6 +2603,7 @@ Item {
 
               readonly property var activeCategoryList: {
                 var baseList = []
+                var searching = String(root.searchQuery || "").trim().length > 0 && !root.isCommandMode
                 if (root.activeFilter !== "all" && root.activeFilter !== "favorites") {
                   for (var i = 0; i < root.currentCategories.length; i++) {
                     if (root.currentCategories[i].id === root.activeFilter) {
@@ -2464,6 +2613,17 @@ Item {
                 } else {
                   for (var j = 0; j < root.currentCategories.length; j++) {
                     baseList.push(root.currentCategories[j])
+                  }
+                }
+                if (searching) {
+                  var nonEmpty = []
+                  for (var n = 0; n < baseList.length; n++) {
+                    if (root.itemsForCategory(baseList[n]).length > 0) nonEmpty.push(baseList[n])
+                  }
+                  baseList = nonEmpty
+                  var otherCats = root.otherSpaceCategoryEntries()
+                  for (var o = 0; o < otherCats.length; o++) {
+                    if (root.itemsForCategory(otherCats[o]).length > 0) baseList.push(otherCats[o])
                   }
                 }
                 if (root.searchSystemColumnItems && root.searchSystemColumnItems.length > 0) {
@@ -2486,6 +2646,7 @@ Item {
                   required property var modelData
                   readonly property bool isLiveCat: modelData.type === "rss" || modelData.type === "github"
                   readonly property bool isOmarchyCat: modelData.type === "omarchy"
+                  readonly property bool isOtherSpaceCat: modelData.type === "other-space"
                   readonly property color catAccent: root.roleColor(modelData.colorRole)
                   readonly property var columnSourceItems: root.itemsForCategory(modelData)
                   readonly property var columnItems: root.visibleColumnItems(modelData)
@@ -2567,7 +2728,7 @@ Item {
 
                           Rectangle {
                             id: liveTypeBadge
-                            visible: catColumnCard.isLiveCat
+                            visible: catColumnCard.isLiveCat || catColumnCard.isOtherSpaceCat
                             height: Style.space(16)
                             width: liveTypeTag.implicitWidth + Style.space(8)
                             radius: 3
@@ -2577,7 +2738,9 @@ Item {
                             Text {
                               id: liveTypeTag
                               anchors.centerIn: parent
-                              text: modelData.type === "github" ? "GH" : "RSS"
+                              text: catColumnCard.isOtherSpaceCat
+                                ? root.tr("otherSpaceBadge")
+                                : (modelData.type === "github" ? "GH" : "RSS")
                               color: catColumnCard.catAccent
                               font.family: root.fontFamily
                               font.pixelSize: Style.font.caption - 2
@@ -2588,10 +2751,10 @@ Item {
 
                         MouseArea {
                           anchors.fill: parent
-                          enabled: !catColumnCard.isOmarchyCat
-                          cursorShape: catColumnCard.isOmarchyCat ? Qt.ArrowCursor : Qt.PointingHandCursor
+                          enabled: !catColumnCard.isOmarchyCat && !catColumnCard.isOtherSpaceCat
+                          cursorShape: (catColumnCard.isOmarchyCat || catColumnCard.isOtherSpaceCat) ? Qt.ArrowCursor : Qt.PointingHandCursor
                           onClicked: {
-                            if (!catColumnCard.isOmarchyCat) root.openCategoryModal(modelData)
+                            if (!catColumnCard.isOmarchyCat && !catColumnCard.isOtherSpaceCat) root.openCategoryModal(modelData)
                           }
                         }
                       }
@@ -2623,7 +2786,7 @@ Item {
                         }
 
                         Rectangle {
-                          visible: !catColumnCard.isOmarchyCat
+                          visible: !catColumnCard.isOmarchyCat && !catColumnCard.isOtherSpaceCat
                           width: Style.space(22)
                           height: Style.space(20)
                           radius: Style.cornerRadius > 0 ? Math.max(3, Style.cornerRadius - 2) : 3

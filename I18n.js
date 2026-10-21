@@ -34,10 +34,12 @@ var STRINGS = {
     statusShortcutError: "Shortcut error: ",
 
     // Search & Filters
-    searchPlaceholder: "Search bookmarks, commands, Omarchy actions, or '>' for all...",
+    searchPlaceholder: "Search all spaces, commands, Omarchy actions, or '>' for apps...",
     filterAll: "All",
     filterFavorites: "★ Favorites",
     omarchyColumnName: "Omarchy & Apps",
+    otherSpaceBadge: "SPACE",
+    frequentHeader: "★ FREQUENT",
 
     // Orbit Section
     orbitHeader: "󱐋 QUICK ACCESS / PRIMARY ORBIT",
@@ -196,10 +198,12 @@ var STRINGS = {
     statusShortcutError: "Chyba zkratky: ",
 
     // Search & Filters
-    searchPlaceholder: "Hledat odkazy, příkazy, Omarchy akce, nebo '>' pro vše...",
+    searchPlaceholder: "Hledat ve všech prostorech, příkazy, Omarchy akce, nebo '>' pro apps...",
     filterAll: "Vše",
     filterFavorites: "★ Oblíbené",
     omarchyColumnName: "Omarchy & Aplikace",
+    otherSpaceBadge: "PROSTOR",
+    frequentHeader: "★ NEJČASTĚJŠÍ",
 
     // Orbit Section
     orbitHeader: "󱐋 QUICK ACCESS / PRIMARY ORBIT",
