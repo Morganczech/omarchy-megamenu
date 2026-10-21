@@ -617,7 +617,11 @@ Item {
 
   function refreshLiveFeeds(forceRefresh, singleCategoryId) {
     if (!root.dirReady || liveFeedFetchProc.running) return
+    // prlimit --as caps helper address space (128 MiB) so a hostile feed
+    // cannot exhaust shell-session memory via the Python helper.
     var args = [
+      "prlimit",
+      "--as=134217728",
       "python3",
       root.pluginDir + "/scripts/fetch-feeds.py",
       root.dataDir + "/data.json",
