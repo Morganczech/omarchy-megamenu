@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import json
 import os
+import stat
 import subprocess
 import sys
 import tempfile
@@ -14,16 +15,50 @@ def _roots(request):
     return [os.path.abspath(r) for r in request.get("roots") or [] if r]
 
 
+def _normalize_root(root):
+    root_abs = os.path.abspath(root)
+    if root_abs == os.sep:
+        return os.sep
+    return root_abs.rstrip(os.sep)
+
+
+def _contains(root, path):
+    if root == os.sep:
+        return path == os.sep or path.startswith(os.sep)
+    return path == root or path.startswith(root + os.sep)
+
+
+def _symlink_between(root, path):
+    if path == root:
+        return os.path.islink(path)
+    relative = path[1:] if root == os.sep else path[len(root) + 1 :]
+    current = root
+    for part in relative.split(os.sep):
+        if part in ("", "."):
+            continue
+        if part == "..":
+            return True
+        current = os.path.join(current, part)
+        if os.path.islink(current):
+            return True
+    return False
+
+
 def _allowed(path, roots):
-    if not path or "\0" in path or os.path.islink(path):
+    if not path or "\0" in path or ".." in path.split(os.sep):
         return False
     abs_path = os.path.abspath(path)
-    parts = abs_path.split(os.sep)
-    if ".." in parts:
+    try:
+        real_path = os.path.realpath(abs_path)
+    except OSError:
         return False
     for root in roots:
-        root_abs = os.path.abspath(root).rstrip(os.sep)
-        if abs_path == root_abs or abs_path.startswith(root_abs + os.sep):
+        root_abs = _normalize_root(root)
+        if not _contains(root_abs, abs_path):
+            continue
+        if _symlink_between(root_abs, abs_path):
+            continue
+        if _contains(_normalize_root(os.path.realpath(root_abs)), real_path):
             return True
     return False
 
@@ -60,11 +95,20 @@ def _scan(request):
     files = []
     errors = []
     truncated = False
+    capped = False
+
+    def onerror(err):
+        nonlocal truncated
+        errors.append({"path": getattr(err, "filename", None) or "", "error": str(err)})
+        truncated = True
+
     for root in _roots(request):
-        if not os.path.isdir(root) or os.path.islink(root):
+        if os.path.islink(root) or not os.path.isdir(root):
             errors.append({"path": root, "error": "unreadable"})
+            if not os.path.islink(root):
+                truncated = True
             continue
-        for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        for dirpath, dirnames, filenames in os.walk(root, followlinks=False, onerror=onerror):
             dirnames[:] = [name for name in dirnames if not name.startswith(".") and not os.path.islink(os.path.join(dirpath, name))]
             for name in sorted(filenames):
                 if name.startswith(".") or not name.endswith(".md"):
@@ -73,12 +117,16 @@ def _scan(request):
                 if os.path.islink(path):
                     continue
                 try:
-                    st = os.stat(path)
+                    st = os.lstat(path)
+                    if not stat.S_ISREG(st.st_mode):
+                        errors.append({"path": path, "error": "unreadable"})
+                        continue
+                    with open(path, "rb") as handle:
+                        prefix = handle.read(TITLE_CAP).decode("utf-8", "replace")
                 except OSError as exc:
                     errors.append({"path": path, "error": str(exc)})
+                    truncated = True
                     continue
-                with open(path, "rb") as handle:
-                    prefix = handle.read(TITLE_CAP).decode("utf-8", "replace")
                 files.append({
                     "path": path,
                     "title": _title(prefix, name[:-3]),
@@ -88,10 +136,11 @@ def _scan(request):
                 })
                 if len(files) >= SCAN_CAP:
                     truncated = True
+                    capped = True
                     break
-            if truncated:
+            if capped:
                 break
-        if truncated:
+        if capped:
             break
     files.sort(key=lambda item: item["path"])
     return {"ok": True, "files": files, "truncated": truncated, "errors": errors}
@@ -100,14 +149,20 @@ def _scan(request):
 def _read(request):
     path = request.get("path") or ""
     roots = _roots(request)
-    if not _allowed(path, roots) or not os.path.isfile(path):
-        return {"ok": False, "error": "unreadable", "frontmatter": "", "body": "", "mtime": 0, "tooLarge": False}
-    size = os.path.getsize(path)
-    if size > BODY_CAP:
-        return {"ok": True, "frontmatter": "", "body": "", "mtime": int(os.stat(path).st_mtime), "tooLarge": True}
-    with open(path, encoding="utf-8") as handle:
-        frontmatter, body = _split(handle.read())
-    return {"ok": True, "frontmatter": frontmatter, "body": body, "mtime": int(os.stat(path).st_mtime), "tooLarge": False}
+    denied = {"ok": False, "error": "unreadable", "frontmatter": "", "body": "", "mtime": 0, "tooLarge": False}
+    if not _allowed(path, roots):
+        return denied
+    try:
+        st = os.lstat(path)
+        if not stat.S_ISREG(st.st_mode):
+            return denied
+        if st.st_size > BODY_CAP:
+            return {"ok": True, "frontmatter": "", "body": "", "mtime": int(st.st_mtime), "tooLarge": True}
+        with open(path, encoding="utf-8") as handle:
+            frontmatter, body = _split(handle.read())
+    except OSError:
+        return denied
+    return {"ok": True, "frontmatter": frontmatter, "body": body, "mtime": int(st.st_mtime), "tooLarge": False}
 
 
 def _write(request):
@@ -147,6 +202,8 @@ def _rename(request):
     if not filename or filename.startswith(".") or "/" in filename or "\\" in filename:
         return {"ok": False, "error": "bad name"}
     dest = os.path.join(os.path.dirname(path), filename)
+    if not _allowed(dest, roots):
+        return {"ok": False, "error": "outside roots"}
     if os.path.lexists(dest):
         return {"ok": False, "error": "exists"}
     os.rename(path, dest)
