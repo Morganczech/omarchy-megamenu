@@ -1362,6 +1362,100 @@ function mergeImportedFolders(data, targetSpaceId, folders) {
   return next
 }
 
+function noteListTitle(prefixText, filenameStem) {
+  var text = String(prefixText || "").replace(/^\uFEFF/, "")
+  var lines = text.split(/\r?\n/)
+  var start = 0
+  if (lines.length > 0 && lines[0].trim() === "---") {
+    for (var i = 1; i < lines.length; i++) {
+      if (lines[i].trim() === "---") {
+        start = i + 1
+        break
+      }
+    }
+  }
+  for (var j = start; j < lines.length; j++) {
+    var line = lines[j]
+    var heading = line.match(/^(#{1,6})\s+(.*)$/)
+    if (heading && String(heading[2]).trim()) return String(heading[2]).trim()
+    if (String(line).trim()) break
+  }
+  var stem = String(filenameStem || "").trim()
+  return stem || "note"
+}
+
+function noteFilename(title, takenNames) {
+  var raw = String(title || "").replace(/^(#{1,6})\s+/, "").trim()
+  raw = raw.replace(/[\/\\\u0000-\u001F]/g, "-")
+  raw = raw.replace(/^[\s.]+|[\s.]+$/g, "")
+  raw = raw.replace(/-+/g, "-").replace(/^-|-$/g, "")
+  if (!raw) raw = "note"
+  var taken = {}
+  var names = Array.isArray(takenNames) ? takenNames : []
+  for (var i = 0; i < names.length; i++) taken[String(names[i])] = true
+  var candidate = raw + ".md"
+  if (!taken[candidate]) return candidate
+  var n = 2
+  while (taken[raw + "-" + n + ".md"]) n++
+  return raw + "-" + n + ".md"
+}
+
+function notePathAllowed(path, roots) {
+  var value = String(path || "")
+  if (!value || value.indexOf("\0") !== -1) return false
+  if (value.split("/").indexOf("..") !== -1) return false
+  var list = Array.isArray(roots) ? roots : []
+  for (var i = 0; i < list.length; i++) {
+    var root = String(list[i] || "").replace(/\/+$/, "")
+    if (!root || root.split("/").indexOf("..") !== -1) continue
+    if (value === root || value.indexOf(root + "/") === 0) return true
+  }
+  return false
+}
+
+function emptyNotes() {
+  return { writeRoot: "", roots: [], cards: [] }
+}
+
+function mergeNoteScan(notes, files, inboxCategoryId, truncated) {
+  var base = notes && typeof notes === "object" ? notes : emptyNotes()
+  var cards = Array.isArray(base.cards) ? base.cards : []
+  var byPath = {}
+  for (var i = 0; i < cards.length; i++) {
+    if (cards[i] && cards[i].path) byPath[String(cards[i].path)] = cards[i]
+  }
+  var seen = {}
+  var nextCards = []
+  var incoming = Array.isArray(files) ? files : []
+  for (var f = 0; f < incoming.length; f++) {
+    var file = incoming[f]
+    if (!file || !file.path) continue
+    var p = String(file.path)
+    seen[p] = true
+    var prev = byPath[p]
+    var slot = prev ? Math.round(Number(prev.pinnedSlot) || 0) : 0
+    if (slot < 0 || slot > 6) slot = 0
+    nextCards.push({
+      path: p,
+      categoryId: prev && prev.categoryId ? String(prev.categoryId) : String(inboxCategoryId || ""),
+      colorRole: prev && prev.colorRole ? String(prev.colorRole) : "",
+      badgeText: prev && prev.badgeText ? String(prev.badgeText) : "",
+      pinnedSlot: slot
+    })
+  }
+  if (truncated) {
+    for (var c = 0; c < cards.length; c++) {
+      var oldPath = cards[c] && cards[c].path ? String(cards[c].path) : ""
+      if (oldPath && !seen[oldPath]) nextCards.push(cards[c])
+    }
+  }
+  return {
+    writeRoot: String(base.writeRoot || ""),
+    roots: Array.isArray(base.roots) ? base.roots.slice() : [],
+    cards: nextCards
+  }
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     plainTextLabel: plainTextLabel,
@@ -1401,6 +1495,10 @@ if (typeof module !== "undefined") {
     deleteCategory: deleteCategory,
     upsertSpace: upsertSpace,
     deleteSpace: deleteSpace,
-    mergeImportedFolders: mergeImportedFolders
+    mergeImportedFolders: mergeImportedFolders,
+    noteListTitle: noteListTitle,
+    noteFilename: noteFilename,
+    notePathAllowed: notePathAllowed,
+    mergeNoteScan: mergeNoteScan
   }
 }
