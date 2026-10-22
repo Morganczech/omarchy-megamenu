@@ -651,6 +651,7 @@ Item {
       return
     }
     var writtenText = text
+    var token = root.noteDraftToken
     root.runNotes({
       cmd: "write",
       path: path,
@@ -663,18 +664,26 @@ Item {
         if (done) done(false)
         return
       }
+      var savedPath = String(res.path || path)
+      var savedMtime = Number(res.mtime) || 0
+      if (token !== root.noteDraftToken) {
+        root.rememberWrittenNote(savedPath, savedMtime, writtenText)
+        root.scanNotes()
+        if (done) done(false)
+        return
+      }
       var current = root.noteDraft || root.emptyNoteDraft()
       var textNow = String(current.text || "")
       var sameBody = textNow === writtenText
       root.noteDraft = {
-        path: String(res.path || path),
+        path: savedPath,
         text: textNow,
         frontmatter: String(current.frontmatter || frontmatter),
-        mtime: Number(res.mtime) || 0,
+        mtime: savedMtime,
         dirty: !sameBody
       }
       root.noteReadOnly = false
-      root.rememberWrittenNote(root.noteDraft.path, root.noteDraft.mtime, writtenText)
+      root.rememberWrittenNote(savedPath, savedMtime, writtenText)
       root.scanNotes()
       if (done) done(sameBody)
     })
@@ -747,6 +756,11 @@ Item {
         readIt()
       })
       return
+    }
+    var leaving = root.noteDraft || {}
+    if (leaving.dirty && !String(leaving.text || "").trim()) {
+      root.noteDraftToken = root.noteDraftToken + 1
+      root.clearNoteDraft()
     }
     readIt()
   }
