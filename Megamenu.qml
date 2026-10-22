@@ -84,13 +84,14 @@ Item {
   property bool contextMenuOpen: false
   property string contextMoveBrowseSpaceId: ""
   property var contextMenuItem: null
+  readonly property bool contextMenuIsNote: !!(root.contextMenuItem && root.contextMenuItem.isNote === true)
   property real contextMenuX: 0
   property real contextMenuY: 0
   property bool spacesDropdownOpen: false
   property real spacesDropdownX: 0
   property real spacesDropdownY: 0
 
-  // Modals: "" | "editItem" | "editCategory" | "editSpace" | "importBookmarks"
+  // Modals: "" | "editItem" | "editCategory" | "editSpace" | "importBookmarks" | "shortcut" | "noteFolders" | "noteRename" | "noteTrash"
   property string activeModal: ""
 
   // Edit Item Modal fields
@@ -111,6 +112,12 @@ Item {
   property string formItemBadgeText: ""
   property string formItemColorRole: ""
   property int formItemPinnedSlot: 0
+  property bool formEditingNote: false
+  property string formNotePath: ""
+  property string formNoteTitle: ""
+  property string formNoteFilename: ""
+  property string formNoteWriteRoot: ""
+  property string formNoteRootAdd: ""
   property bool formItemFavorite: false
   property string formAppSearchQuery: ""
 
@@ -666,63 +673,173 @@ Item {
     })
   }
 
-  function dropMissingNote(path) {
-    var next = Storage.cloneData(root.data)
-    if (!next.notes || typeof next.notes !== "object") {
+  function notesData(next) {
+    if (!next.notes || typeof next.notes !== "object" || Array.isArray(next.notes)) {
       next.notes = { writeRoot: "", roots: [], cards: [] }
     }
-    var cards = next.notes.cards || []
+    if (!next.notes.cards) next.notes.cards = []
+    return next.notes
+  }
+
+  function noteBaseName(path) {
+    var value = String(path || "")
+    var slash = value.lastIndexOf("/")
+    return slash >= 0 ? value.slice(slash + 1) : value
+  }
+
+  function noteMdFilename(raw) {
+    var filename = String(raw || "").trim()
+    if (!filename) return ""
+    var lower = filename.toLowerCase()
+    if (lower.length >= 3 && lower.slice(lower.length - 3) === ".md") {
+      if (filename.slice(filename.length - 3) !== ".md") filename = filename.slice(0, filename.length - 3) + ".md"
+      return filename
+    }
+    return filename + ".md"
+  }
+
+  function noteFileInfo(path) {
+    var files = root.noteFiles || []
+    for (var i = 0; i < files.length; i++) {
+      if (files[i] && String(files[i].path) === String(path)) {
+        return { found: true, mtime: Number(files[i].mtime) || 0 }
+      }
+    }
+    return { found: false, mtime: 0 }
+  }
+
+  function retargetNoteFile(oldPath, newPath) {
+    var files = root.noteFiles ? root.noteFiles.slice() : []
+    for (var i = 0; i < files.length; i++) {
+      if (!files[i] || String(files[i].path) !== String(oldPath)) continue
+      var copy = {
+        path: String(newPath),
+        title: String(files[i].title || ""),
+        mtime: Number(files[i].mtime) || 0,
+        size: Number(files[i].size) || 0,
+        tooLarge: files[i].tooLarge === true
+      }
+      files[i] = copy
+      root.noteFiles = files
+      return
+    }
+  }
+
+  function removeNoteCard(path) {
+    var next = Storage.cloneData(root.data)
+    var notes = root.notesData(next)
+    var cards = notes.cards || []
     var kept = []
     for (var i = 0; i < cards.length; i++) {
       if (cards[i] && String(cards[i].path) !== String(path)) kept.push(cards[i])
     }
-    next.notes.cards = kept
-    var settled = Storage.noteReadSettlement(root.noteDraftToken, root.noteDraft || root.emptyNoteDraft(), path, { ok: false, error: "missing" })
-    if (settled.action === "drop") root.noteDraftToken = settled.token
-    root.clearNoteDraft()
+    notes.cards = kept
+    var files = root.noteFiles ? root.noteFiles.slice() : []
+    var keptFiles = []
+    for (var f = 0; f < files.length; f++) {
+      if (files[f] && String(files[f].path) !== String(path)) keptFiles.push(files[f])
+    }
+    root.noteFiles = keptFiles
     root.commitData(next)
+  }
+
+  function dropMissingNote(path) {
+    root.noteDraftToken = root.noteDraftToken + 1
+    root.removeNoteCard(path)
+    root.clearNoteDraft()
+  }
+
+  function readNoteIntoEditor(path) {
+    path = String(path || "")
+    if (!path) return
+    var roots = root.noteWriteRoots()
+    if (!Storage.notePathAllowed(path, roots)) {
+      root.showStatus(root.tr("notesScanFailed"))
+      return
+    }
+    root.noteDraftToken = root.noteDraftToken + 1
+    var token = root.noteDraftToken
+    root.runNotes({ cmd: "read", path: path, roots: roots }, function (res) {
+      if (token !== root.noteDraftToken) return
+      var draft = root.noteDraft || root.emptyNoteDraft()
+      var missing = !!(res && res.ok === false && String(res.error || "") === "missing")
+      if (missing && draft.dirty) {
+        // Keep the unsent text, drop the path, and move the token so a write
+        // already in flight cannot put the old path back onto the draft.
+        root.noteDraftToken = root.noteDraftToken + 1
+        root.noteReadOnly = false
+        root.noteDraft = {
+          path: "",
+          text: String(draft.text || ""),
+          frontmatter: String(draft.frontmatter || ""),
+          mtime: 0,
+          dirty: true
+        }
+        root.showStatus(root.tr("notesFileGone"))
+        return
+      }
+      var settled = Storage.noteReadSettlement(token, draft, path, res)
+      if (settled.action === "keep") {
+        if (draft.dirty && res && res.ok && (Number(res.mtime) || 0) !== (Number(draft.mtime) || 0)) {
+          root.showStatus(root.tr("notesExternalChange"))
+        }
+        return
+      }
+      if (settled.action === "fail") {
+        root.showStatus(root.tr("notesScanFailed"))
+        return
+      }
+      if (settled.action === "drop") {
+        var open = root.noteDraft || root.emptyNoteDraft()
+        if (String(open.path || "") && String(open.path) !== String(path)) {
+          root.removeNoteCard(path)
+          return
+        }
+        root.dropMissingNote(path)
+        return
+      }
+      root.noteDraftToken = settled.token
+      root.noteReadOnly = settled.readOnly === true
+      var nextDraft = settled.draft || {}
+      root.noteDraft = {
+        path: String(nextDraft.path || ""),
+        text: String(nextDraft.text || ""),
+        frontmatter: String(nextDraft.frontmatter || ""),
+        mtime: Number(nextDraft.mtime) || 0,
+        dirty: false
+      }
+    })
+  }
+
+  function reconcileOpenNote(path) {
+    path = String(path || "")
+    var draft = root.noteDraft || root.emptyNoteDraft()
+    if (!path || String(draft.path || "") !== path) return
+    var info = root.noteFileInfo(path)
+    if (!info.found) {
+      root.readNoteIntoEditor(path)
+      return
+    }
+    if ((Number(info.mtime) || 0) === (Number(draft.mtime) || 0)) return
+    if (draft.dirty) {
+      root.showStatus(root.tr("notesExternalChange"))
+      return
+    }
+    root.readNoteIntoEditor(path)
   }
 
   function selectNote(path) {
     path = String(path || "")
     if (!path) return
-    function readIt() {
-      var roots = root.noteWriteRoots()
-      if (!Storage.notePathAllowed(path, roots)) {
-        root.showStatus(root.tr("notesScanFailed"))
-        return
-      }
-      root.noteDraftToken = root.noteDraftToken + 1
-      var token = root.noteDraftToken
-      root.runNotes({ cmd: "read", path: path, roots: roots }, function (res) {
-        if (token !== root.noteDraftToken) return
-        var draft = root.noteDraft || root.emptyNoteDraft()
-        var settled = Storage.noteReadSettlement(token, draft, path, res)
-        if (settled.action === "keep") return
-        if (settled.action === "fail") {
-          root.showStatus(root.tr("notesScanFailed"))
-          return
-        }
-        if (settled.action === "drop") {
-          root.dropMissingNote(path)
-          return
-        }
-        root.noteDraftToken = settled.token
-        root.noteReadOnly = settled.readOnly === true
-        var nextDraft = settled.draft || {}
-        root.noteDraft = {
-          path: String(nextDraft.path || ""),
-          text: String(nextDraft.text || ""),
-          frontmatter: String(nextDraft.frontmatter || ""),
-          mtime: Number(nextDraft.mtime) || 0,
-          dirty: false
-        }
-      })
+    var draft = root.noteDraft || root.emptyNoteDraft()
+    if (String(draft.path || "") === path) {
+      root.reconcileOpenNote(path)
+      return
     }
     if (root.noteDraftNeedsSave()) {
       root.saveCurrentNote(function (ok) {
         if (!ok) return
-        readIt()
+        root.readNoteIntoEditor(path)
       })
       return
     }
@@ -731,13 +848,235 @@ Item {
       root.noteDraftToken = root.noteDraftToken + 1
       root.clearNoteDraft()
     }
-    readIt()
+    root.readNoteIntoEditor(path)
+  }
+
+  function openNoteFoldersModal() {
+    var notes = root.data && root.data.notes ? root.data.notes : {}
+    root.formEditingNote = false
+    root.formNoteWriteRoot = String(notes.writeRoot || "")
+    root.formNoteRootAdd = ""
+    noteRootsModel.clear()
+    var extra = notes.roots || []
+    for (var i = 0; i < extra.length; i++) {
+      if (extra[i]) noteRootsModel.append({ path: String(extra[i]) })
+    }
+    root.contextMenuOpen = false
+    root.spacesDropdownOpen = false
+    root.activeModal = "noteFolders"
+    Qt.callLater(function () {
+      if (noteWriteRootInput) noteWriteRootInput.forceActiveFocus()
+    })
+  }
+
+  function saveNoteFolders() {
+    var writeRoot = String(root.formNoteWriteRoot || "").trim()
+    var roots = []
+    var seen = {}
+    function pushRoot(value) {
+      var folder = String(value || "").trim()
+      if (!folder || folder === writeRoot || seen[folder]) return
+      seen[folder] = true
+      roots.push(folder)
+    }
+    for (var i = 0; i < noteRootsModel.count; i++) pushRoot(noteRootsModel.get(i).path)
+    pushRoot(root.formNoteRootAdd)
+    var next = Storage.cloneData(root.data)
+    var notes = root.notesData(next)
+    notes.writeRoot = writeRoot
+    notes.roots = roots
+    root.activeModal = ""
+    root.commitData(next)
+    root.scanNotes()
+  }
+
+  function openNoteMetaModal(note) {
+    if (!note || !note.path) return
+    root.contextMenuOpen = false
+    root.spacesDropdownOpen = false
+    root.formEditingNote = true
+    root.formNotePath = String(note.path || "")
+    root.formNoteTitle = String(note.title || "")
+    root.formItemId = ""
+    root.formItemSpaceId = root.activeSpaceId
+    root.formItemOriginalSpaceId = root.activeSpaceId
+    root.formItemCategoryId = String(note.categoryId || "")
+    root.formItemBadgeText = String(note.badgeText || "")
+    root.formItemColorRole = String(note.colorRole || "")
+    var slot = Math.round(Number(note.pinnedSlot) || 0)
+    if (slot < 0) slot = 0
+    if (slot > 6) slot = 6
+    root.formItemPinnedSlot = slot
+    root.activeModal = "editItem"
+  }
+
+  function saveNoteMeta() {
+    var path = String(root.formNotePath || "")
+    root.formEditingNote = false
+    if (!path) {
+      root.activeModal = ""
+      return
+    }
+    var slot = Math.round(Number(root.formItemPinnedSlot) || 0)
+    if (slot < 0) slot = 0
+    if (slot > 6) slot = 6
+    var next = Storage.cloneData(root.data)
+    var notes = root.notesData(next)
+    var cards = notes.cards
+    var found = false
+    for (var i = 0; i < cards.length; i++) {
+      var card = cards[i]
+      if (!card) continue
+      if (String(card.path) === path) {
+        card.categoryId = String(root.formItemCategoryId || "")
+        card.colorRole = String(root.formItemColorRole || "")
+        card.badgeText = String(root.formItemBadgeText || "").trim()
+        card.pinnedSlot = slot
+        found = true
+      } else if (slot >= 1 && slot <= 6 && Math.round(Number(card.pinnedSlot) || 0) === slot) {
+        card.pinnedSlot = 0
+      }
+    }
+    if (!found) {
+      cards.push({
+        path: path,
+        categoryId: String(root.formItemCategoryId || ""),
+        colorRole: String(root.formItemColorRole || ""),
+        badgeText: String(root.formItemBadgeText || "").trim(),
+        pinnedSlot: slot
+      })
+    }
+    root.activeModal = ""
+    root.commitData(next)
+  }
+
+  function openNoteRenameModal(note) {
+    if (!note || !note.path) return
+    root.contextMenuOpen = false
+    root.spacesDropdownOpen = false
+    root.formEditingNote = false
+    root.formNotePath = String(note.path || "")
+    root.formNoteTitle = String(note.title || "")
+    root.formNoteFilename = root.noteBaseName(note.path)
+    root.activeModal = "noteRename"
+    Qt.callLater(function () {
+      if (noteRenameInput) noteRenameInput.forceActiveFocus()
+    })
+  }
+
+  function saveNoteRename() {
+    var path = String(root.formNotePath || "")
+    var filename = root.noteMdFilename(root.formNoteFilename)
+    if (!path || !filename || filename === ".md" || filename.charAt(0) === "." || filename.indexOf("/") !== -1 || filename.indexOf("\\") !== -1) {
+      root.showStatus(root.tr("notesRenameFailed"))
+      return
+    }
+    if (filename === root.noteBaseName(path)) {
+      root.activeModal = ""
+      return
+    }
+    var roots = root.noteWriteRoots()
+    root.runNotes({ cmd: "rename", path: path, filename: filename, roots: roots }, function (res) {
+      if (!res || !res.ok || !res.path) {
+        root.showStatus(root.tr("notesRenameFailed"))
+        return
+      }
+      var dest = String(res.path)
+      var next = Storage.cloneData(root.data)
+      var cards = root.notesData(next).cards
+      for (var i = 0; i < cards.length; i++) {
+        if (cards[i] && String(cards[i].path) === path) cards[i].path = dest
+      }
+      var draft = root.noteDraft || root.emptyNoteDraft()
+      if (String(draft.path || "") === path) {
+        root.noteDraftToken = root.noteDraftToken + 1
+        root.noteDraft = {
+          path: dest,
+          text: String(draft.text || ""),
+          frontmatter: String(draft.frontmatter || ""),
+          mtime: Number(draft.mtime) || 0,
+          dirty: draft.dirty === true
+        }
+      }
+      root.retargetNoteFile(path, dest)
+      root.activeModal = ""
+      root.commitData(next)
+      root.scanNotes()
+    })
+  }
+
+  function openNoteTrashModal(note) {
+    if (!note || !note.path) return
+    root.contextMenuOpen = false
+    root.spacesDropdownOpen = false
+    root.formEditingNote = false
+    root.formNotePath = String(note.path || "")
+    root.formNoteTitle = String(note.title || note.path || "")
+    root.activeModal = "noteTrash"
+  }
+
+  function confirmNoteTrash() {
+    var path = String(root.formNotePath || "")
+    if (!path) {
+      root.activeModal = ""
+      return
+    }
+    root.activeModal = ""
+    root.runNotes({ cmd: "trash", path: path, roots: root.noteWriteRoots() }, function (res) {
+      if (!res || !res.ok) {
+        root.showStatus(root.tr("notesTrashFailed"))
+        return
+      }
+      var next = Storage.cloneData(root.data)
+      var cards = root.notesData(next).cards
+      var kept = []
+      for (var i = 0; i < cards.length; i++) {
+        if (cards[i] && String(cards[i].path) !== path) kept.push(cards[i])
+      }
+      next.notes.cards = kept
+      var files = root.noteFiles ? root.noteFiles.slice() : []
+      var keptFiles = []
+      for (var f = 0; f < files.length; f++) {
+        if (files[f] && String(files[f].path) !== path) keptFiles.push(files[f])
+      }
+      root.noteFiles = keptFiles
+      var draft = root.noteDraft || {}
+      if (String(draft.path || "") === path) {
+        root.noteDraftToken = root.noteDraftToken + 1
+        root.clearNoteDraft()
+      }
+      root.commitData(next)
+      root.scanNotes()
+    })
+  }
+
+  function openNoteInOmawrite(path) {
+    var requested = String(path || "")
+    var draft = root.noteDraft || root.emptyNoteDraft()
+    var draftPath = String(draft.path || "")
+    var text = String(draft.text || "")
+    var target = requested || draftPath
+    if (!target && !text.trim()) return
+    var opensDraft = !requested || requested === draftPath
+    if (root.noteDraftNeedsSave()) {
+      var token = root.noteDraftToken
+      var launchPath = opensDraft ? "" : requested
+      root.saveCurrentNote(function (ok) {
+        if (!ok || token !== root.noteDraftToken) return
+        var saved = launchPath || String((root.noteDraft && root.noteDraft.path) || "")
+        if (!saved) return
+        Util.execDetached("omawrite " + Util.shellQuote(saved))
+      })
+      return
+    }
+    if (!target) return
+    Util.execDetached("omawrite " + Util.shellQuote(target))
   }
 
   function beginNoteDraft() {
     var notes = root.data && root.data.notes ? root.data.notes : {}
     if (!String(notes.writeRoot || "")) {
-      root.activeModal = "noteFolders"
+      root.openNoteFoldersModal()
       return
     }
     function openEmpty() {
@@ -782,11 +1121,35 @@ Item {
         root.noteError = root.tr("notesScanFailed")
         return
       }
-      var merged = Storage.mergeNoteScan(root.data.notes, res.files || [], "cat-notes-inbox", res.truncated === true)
+      var previousNotes = root.data.notes
+      var openDraft = root.noteDraft || root.emptyNoteDraft()
+      var openPath = String(openDraft.path || "")
+      var merged = Storage.mergeNoteScan(previousNotes, res.files || [], "cat-notes-inbox", res.truncated === true)
+      if (openPath && openDraft.dirty) {
+        var mergedCards = merged.cards || []
+        var openKept = false
+        for (var k = 0; k < mergedCards.length; k++) {
+          if (mergedCards[k] && String(mergedCards[k].path) === openPath) {
+            openKept = true
+            break
+          }
+        }
+        if (!openKept) {
+          var oldCards = (previousNotes && previousNotes.cards) ? previousNotes.cards : []
+          for (var c = 0; c < oldCards.length; c++) {
+            if (oldCards[c] && String(oldCards[c].path) === openPath) {
+              mergedCards.push(oldCards[c])
+              merged.cards = mergedCards
+              break
+            }
+          }
+        }
+      }
       root.data.notes = merged
       root.noteFiles = res.files || []
       root.noteError = (res.errors && res.errors.length) ? root.tr("notesRootSkipped") : ""
       root.commitData(root.data)
+      if (openPath) root.reconcileOpenNote(openPath)
     })
   }
 
@@ -1245,6 +1608,7 @@ Item {
   function openAddItemModal(preselectedCategoryId, preselectedSlot) {
     root.contextMenuOpen = false
     root.spacesDropdownOpen = false
+    root.formEditingNote = false
     var cats = root.currentCategories
     var defaultCat = preselectedCategoryId || (cats.length > 0 ? cats[0].id : "")
     root.formItemId = ""
@@ -1274,6 +1638,7 @@ Item {
     if (!item) return
     root.contextMenuOpen = false
     root.spacesDropdownOpen = false
+    root.formEditingNote = false
     var itType = item.type || "url"
     var customIcon = (itType === "url" && item.iconType !== "glyph") ? "" : String(item.iconValue || "").trim()
     root.formItemId = item.id
@@ -3672,10 +4037,33 @@ Item {
             fontFamily: root.fontFamily
             searchField: searchInput
             roleColorFor: function (role) { return root.roleColor(role) }
+            omawriteLabel: root.tr("notesOpenOmawrite")
             onNoteChosen: function (path) { root.selectNote(path) }
             onDraftEdited: function (text) { root.applyNoteDraftText(text) }
             onSaveRequested: function () { root.saveCurrentNote() }
-            onFoldersRequested: root.activeModal = "noteFolders"
+            onFoldersRequested: root.openNoteFoldersModal()
+            onOmawriteRequested: root.openNoteInOmawrite("")
+            onNoteMenuRequested: function (path, x, y) {
+              var rows = root.notesModel || []
+              var note = null
+              for (var i = 0; i < rows.length; i++) {
+                if (rows[i] && String(rows[i].path) === String(path)) {
+                  note = rows[i]
+                  break
+                }
+              }
+              if (!note || !note.path) return
+              var pos = notePane.mapToItem(card, x, y)
+              root.openContextMenuFor({
+                isNote: true,
+                path: String(note.path || ""),
+                title: String(note.title || ""),
+                categoryId: String(note.categoryId || ""),
+                colorRole: String(note.colorRole || ""),
+                badgeText: String(note.badgeText || ""),
+                pinnedSlot: Math.round(Number(note.pinnedSlot) || 0)
+              }, pos.x, pos.y)
+            }
             onFilterRequested: function (id) { root.activeFilter = id }
             onEditorFocusedChanged: root.noteEditorFocused = editorFocused
           }
@@ -3981,6 +4369,60 @@ Item {
           spacing: Style.space(4)
           onImplicitHeightChanged: if (contextMenuPopup.visible) contextMenuPopup.reclampY()
 
+          Repeater {
+            model: root.contextMenuIsNote ? [
+              { action: "edit", label: root.tr("notesEditAction"), danger: false },
+              { action: "rename", label: root.tr("notesRenameAction"), danger: false },
+              { action: "omawrite", label: root.tr("notesOpenOmawrite"), danger: false },
+              { action: "trash", label: root.tr("notesTrashAction"), danger: true }
+            ] : []
+
+            delegate: Rectangle {
+              required property var modelData
+              width: contextMenuCol.width
+              height: Style.space(30)
+              radius: 4
+              color: noteCtxMouse.containsMouse
+                ? (modelData.danger ? Util.alpha(Color.urgent, 0.18) : root.selectedBackground)
+                : "transparent"
+
+              Text {
+                anchors.left: parent.left
+                anchors.leftMargin: Style.space(8)
+                anchors.right: parent.right
+                anchors.rightMargin: Style.space(8)
+                anchors.verticalCenter: parent.verticalCenter
+                elide: Text.ElideRight
+                text: modelData.label
+                color: modelData.danger
+                  ? Color.urgent
+                  : (noteCtxMouse.containsMouse ? root.selectedText : root.foreground)
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+                font.bold: modelData.danger === true
+              }
+
+              MouseArea {
+                id: noteCtxMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: {
+                  var note = root.contextMenuItem
+                  var action = String(modelData.action || "")
+                  if (action === "edit") root.openNoteMetaModal(note)
+                  else if (action === "rename") root.openNoteRenameModal(note)
+                  else if (action === "trash") root.openNoteTrashModal(note)
+                  else if (action === "omawrite") {
+                    var notePath = note ? String(note.path || "") : ""
+                    root.contextMenuOpen = false
+                    root.openNoteInOmawrite(notePath)
+                  }
+                }
+              }
+            }
+          }
+
           // Header: LAUNCH IN TARGET...
           Text {
             visible: root.contextMenuItem && root.contextMenuItem.type === "url"
@@ -4090,6 +4532,7 @@ Item {
 
           // Divider
           Rectangle {
+            visible: !root.contextMenuIsNote
             width: contextMenuCol.width
             height: 1
             color: Util.alpha(root.foreground, 0.14)
@@ -4097,6 +4540,7 @@ Item {
 
           // Copy URL
           Rectangle {
+            visible: !root.contextMenuIsNote
             width: contextMenuCol.width
             height: Style.space(30)
             radius: 4
@@ -4155,7 +4599,7 @@ Item {
 
           // Edit Bookmark / Item (only for static bookmarks)
           Rectangle {
-            visible: root.contextMenuItem === null || (root.contextMenuItem.isLiveItem !== true && root.contextMenuItem.isSystemResult !== true)
+            visible: !root.contextMenuIsNote && (root.contextMenuItem === null || (root.contextMenuItem.isLiveItem !== true && root.contextMenuItem.isSystemResult !== true))
             width: contextMenuCol.width
             height: Style.space(30)
             radius: 4
@@ -4192,7 +4636,7 @@ Item {
 
           // Move to… (two-step: spaces list, then categories)
           Rectangle {
-            visible: root.contextMenuItem === null || (root.contextMenuItem.isLiveItem !== true && root.contextMenuItem.isSystemResult !== true)
+            visible: !root.contextMenuIsNote && (root.contextMenuItem === null || (root.contextMenuItem.isLiveItem !== true && root.contextMenuItem.isSystemResult !== true))
             width: contextMenuCol.width
             height: Style.space(30)
             radius: 4
@@ -4291,7 +4735,7 @@ Item {
 
           // Delete Item (only for static bookmarks)
           Rectangle {
-            visible: root.contextMenuItem === null || (root.contextMenuItem.isLiveItem !== true && root.contextMenuItem.isSystemResult !== true)
+            visible: !root.contextMenuIsNote && (root.contextMenuItem === null || (root.contextMenuItem.isLiveItem !== true && root.contextMenuItem.isSystemResult !== true))
             width: contextMenuCol.width
             height: Style.space(30)
             radius: 4
@@ -4527,7 +4971,9 @@ Item {
             spacing: Style.space(12)
 
             Text {
-              text: root.formItemId !== "" ? root.tr("modalEditItemTitle") : root.tr("modalAddItemTitle")
+              text: root.formEditingNote
+                ? root.tr("notesEditAction")
+                : (root.formItemId !== "" ? root.tr("modalEditItemTitle") : root.tr("modalAddItemTitle"))
               color: root.foreground
               font.family: root.fontFamily
               font.pixelSize: Style.font.title
@@ -4536,6 +4982,7 @@ Item {
 
             // Type Toggle: Web Link, Local App, or Command
             Row {
+              visible: !root.formEditingNote
               spacing: Style.space(8)
 
               Button {
@@ -4576,7 +5023,7 @@ Item {
             Column {
               width: parent.width
               spacing: Style.space(6)
-              visible: root.formItemType === "app"
+              visible: root.formItemType === "app" && !root.formEditingNote
 
               Text {
                 text: root.tr("pickInstalledAppLabel")
@@ -4661,6 +5108,7 @@ Item {
 
             // Title & Subtitle
             Row {
+              visible: !root.formEditingNote
               width: parent.width
               spacing: Style.space(10)
 
@@ -4694,7 +5142,7 @@ Item {
             Column {
               width: parent.width
               spacing: Style.space(6)
-              visible: root.formItemType === "command"
+              visible: root.formItemType === "command" && !root.formEditingNote
 
               Column {
                 width: parent.width
@@ -4743,7 +5191,7 @@ Item {
             Column {
               width: parent.width
               spacing: 4
-              visible: root.formItemType === "url"
+              visible: root.formItemType === "url" && !root.formEditingNote
               Text { text: root.tr("fieldUrl"); color: Color.muted; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
               TextField {
                 width: parent.width
@@ -4757,6 +5205,7 @@ Item {
             Column {
               width: parent.width
               spacing: 4
+              visible: !root.formEditingNote
               Text { text: root.tr("fieldSpace"); color: Color.muted; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
 
               Flow {
@@ -4839,7 +5288,7 @@ Item {
                   spacing: Style.space(6)
 
                   Column {
-                    width: (parent.width - Style.space(6)) * 0.54
+                    width: root.formEditingNote ? parent.width : (parent.width - Style.space(6)) * 0.54
                     spacing: 4
                     Text {
                       width: parent.width
@@ -4858,6 +5307,7 @@ Item {
                   }
 
                   Column {
+                    visible: !root.formEditingNote
                     width: (parent.width - Style.space(6)) * 0.46
                     spacing: 4
                     Text {
@@ -4942,7 +5392,10 @@ Item {
                 text: root.tr("btnSaveItem")
                 bordered: true
                 selected: true
-                onClicked: root.saveItemModal()
+                onClicked: {
+                  if (root.formEditingNote) root.saveNoteMeta()
+                  else root.saveItemModal()
+                }
               }
             }
           }
@@ -5572,6 +6025,294 @@ Item {
                 bordered: true
                 selected: true
                 onClicked: root.applyGlobalShortcut(root.formShortcutCombo, "replace")
+              }
+            }
+          }
+        }
+
+        // ------------------------------------------------------------
+        // MODAL: Note folders
+        // ------------------------------------------------------------
+        BorderSurface {
+          visible: root.activeModal === "noteFolders"
+          width: Math.min(Style.space(520), parent.width - Style.space(40))
+          height: noteFoldersCol.implicitHeight + Style.space(36)
+          anchors.centerIn: parent
+          radius: root.cornerRadius
+          color: Color.popups.background
+          borderSpec: root.borderSpec
+          padding: Style.space(18)
+
+          MouseArea { anchors.fill: parent }
+
+          ListModel { id: noteRootsModel }
+
+          Column {
+            id: noteFoldersCol
+            width: parent.width - Style.space(36)
+            anchors.centerIn: parent
+            spacing: Style.space(12)
+
+            Text {
+              text: root.tr("notesFoldersTitle")
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.title
+              font.bold: true
+            }
+
+            Column {
+              width: parent.width
+              spacing: 4
+              Text {
+                text: root.tr("notesWriteRootField")
+                color: Color.muted
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+              TextField {
+                id: noteWriteRootInput
+                width: parent.width
+                placeholderText: root.tr("notesAddRootPlaceholder")
+                text: root.formNoteWriteRoot
+                onTextChanged: root.formNoteWriteRoot = text
+                onAccepted: root.saveNoteFolders()
+              }
+            }
+
+            Text {
+              text: root.tr("notesExtraRootField")
+              color: Color.muted
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            Flickable {
+              width: parent.width
+              height: Math.min(noteRootsCol.implicitHeight, Style.space(180))
+              contentWidth: width
+              contentHeight: noteRootsCol.implicitHeight
+              clip: true
+              boundsBehavior: Flickable.StopAtBounds
+              flickableDirection: Flickable.VerticalFlick
+
+              Column {
+                id: noteRootsCol
+                width: parent.width
+                spacing: Style.space(8)
+
+                Repeater {
+                  model: noteRootsModel
+
+                  delegate: Row {
+                    required property int index
+                    required property string path
+                    width: noteRootsCol.width
+                    spacing: Style.space(8)
+
+                    TextField {
+                      width: parent.width - removeRootBtn.implicitWidth - parent.spacing
+                      Component.onCompleted: text = path
+                      onTextChanged: {
+                        var current = noteRootsModel.get(index)
+                        if (current && current.path !== text) noteRootsModel.setProperty(index, "path", text)
+                      }
+                    }
+
+                    Button {
+                      id: removeRootBtn
+                      text: "✕"
+                      bordered: true
+                      onClicked: noteRootsModel.remove(index)
+                    }
+                  }
+                }
+              }
+            }
+
+            Row {
+              width: parent.width
+              spacing: Style.space(8)
+
+              TextField {
+                width: parent.width - addRootBtn.implicitWidth - parent.spacing
+                placeholderText: root.tr("notesAddRootPlaceholder")
+                text: root.formNoteRootAdd
+                onTextChanged: root.formNoteRootAdd = text
+                onAccepted: {
+                  var folder = text.trim()
+                  if (!folder) return
+                  noteRootsModel.append({ path: folder })
+                  root.formNoteRootAdd = ""
+                }
+              }
+
+              Button {
+                id: addRootBtn
+                text: "+"
+                bordered: true
+                onClicked: {
+                  var folder = String(root.formNoteRootAdd || "").trim()
+                  if (!folder) return
+                  noteRootsModel.append({ path: folder })
+                  root.formNoteRootAdd = ""
+                }
+              }
+            }
+
+            Row {
+              anchors.right: parent.right
+              spacing: Style.space(8)
+
+              Button {
+                text: root.tr("btnCancel")
+                bordered: true
+                onClicked: root.activeModal = ""
+              }
+
+              Button {
+                text: root.tr("btnSaveItem")
+                bordered: true
+                selected: true
+                onClicked: root.saveNoteFolders()
+              }
+            }
+          }
+        }
+
+        // ------------------------------------------------------------
+        // MODAL: Rename a note
+        // ------------------------------------------------------------
+        BorderSurface {
+          visible: root.activeModal === "noteRename"
+          width: Math.min(Style.space(460), parent.width - Style.space(40))
+          height: noteRenameCol.implicitHeight + Style.space(36)
+          anchors.centerIn: parent
+          radius: root.cornerRadius
+          color: Color.popups.background
+          borderSpec: root.borderSpec
+          padding: Style.space(18)
+
+          MouseArea { anchors.fill: parent }
+
+          Column {
+            id: noteRenameCol
+            width: parent.width - Style.space(36)
+            anchors.centerIn: parent
+            spacing: Style.space(12)
+
+            Text {
+              text: root.tr("notesRenameAction")
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.title
+              font.bold: true
+            }
+
+            Text {
+              width: parent.width
+              elide: Text.ElideRight
+              textFormat: Text.PlainText
+              text: root.formNoteTitle
+              color: Color.muted
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+            }
+
+            Column {
+              width: parent.width
+              spacing: 4
+              Text {
+                text: root.tr("notesFilenameField")
+                color: Color.muted
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+              TextField {
+                id: noteRenameInput
+                width: parent.width
+                text: root.formNoteFilename
+                onTextChanged: root.formNoteFilename = text
+                onAccepted: root.saveNoteRename()
+              }
+            }
+
+            Row {
+              anchors.right: parent.right
+              spacing: Style.space(8)
+
+              Button {
+                text: root.tr("btnCancel")
+                bordered: true
+                onClicked: root.activeModal = ""
+              }
+
+              Button {
+                text: root.tr("notesRenameAction")
+                bordered: true
+                selected: true
+                onClicked: root.saveNoteRename()
+              }
+            }
+          }
+        }
+
+        // ------------------------------------------------------------
+        // MODAL: Confirm moving a note to the trash
+        // ------------------------------------------------------------
+        BorderSurface {
+          visible: root.activeModal === "noteTrash"
+          width: Math.min(Style.space(460), parent.width - Style.space(40))
+          height: noteTrashCol.implicitHeight + Style.space(36)
+          anchors.centerIn: parent
+          radius: root.cornerRadius
+          color: Color.popups.background
+          borderSpec: root.borderSpec
+          padding: Style.space(18)
+
+          MouseArea { anchors.fill: parent }
+
+          Column {
+            id: noteTrashCol
+            width: parent.width - Style.space(36)
+            anchors.centerIn: parent
+            spacing: Style.space(12)
+
+            Text {
+              width: parent.width
+              wrapMode: Text.WordWrap
+              textFormat: Text.PlainText
+              text: root.formNoteTitle
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.title
+              font.bold: true
+            }
+
+            Text {
+              width: parent.width
+              wrapMode: Text.WordWrap
+              text: root.tr("notesTrashConfirm")
+              color: Color.muted
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+            }
+
+            Row {
+              anchors.right: parent.right
+              spacing: Style.space(8)
+
+              Button {
+                text: root.tr("btnCancel")
+                bordered: true
+                onClicked: root.activeModal = ""
+              }
+
+              Button {
+                text: root.tr("notesTrashAction")
+                bordered: true
+                selected: true
+                onClicked: root.confirmNoteTrash()
               }
             }
           }

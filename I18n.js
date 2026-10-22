@@ -182,7 +182,21 @@ var STRINGS = {
     notesRootSkipped: "A notes folder was skipped",
     notesTooLarge: "This note is too large to edit here",
     notesSaveFailed: "Could not save the note",
-    notesFoldersBtn: "Folders"
+    notesFoldersBtn: "Folders",
+    notesFoldersTitle: "Note folders",
+    notesWriteRootField: "Folder for new notes",
+    notesExtraRootField: "Also read these folders",
+    notesAddRootPlaceholder: "/path/to/folder",
+    notesEditAction: "Edit details",
+    notesTrashAction: "Move to trash",
+    notesFilenameField: "Filename",
+    notesRenameFailed: "Could not rename the note",
+    notesTrashFailed: "Could not move the note to the trash",
+    notesTrashConfirm: "Move this note to the trash?",
+    notesExternalChange: "This note changed on disk",
+    notesFileGone: "This note is no longer on disk",
+    notesOpenOmawrite: "Open in Omawrite",
+    notesRenameAction: "Rename"
   },
 
   cs: {
@@ -360,7 +374,21 @@ var STRINGS = {
     notesRootSkipped: "Složka s poznámkami byla přeskočena",
     notesTooLarge: "Tato poznámka je na úpravu tady příliš velká",
     notesSaveFailed: "Poznámku se nepodařilo uložit",
-    notesFoldersBtn: "Složky"
+    notesFoldersBtn: "Složky",
+    notesFoldersTitle: "Složky poznámek",
+    notesWriteRootField: "Složka pro nové poznámky",
+    notesExtraRootField: "Číst také z těchto složek",
+    notesAddRootPlaceholder: "/cesta/ke/složce",
+    notesEditAction: "Upravit údaje",
+    notesTrashAction: "Přesunout do koše",
+    notesFilenameField: "Název souboru",
+    notesRenameFailed: "Poznámku se nepodařilo přejmenovat",
+    notesTrashFailed: "Poznámku se nepodařilo přesunout do koše",
+    notesTrashConfirm: "Přesunout tuhle poznámku do koše?",
+    notesExternalChange: "Tahle poznámka se změnila na disku",
+    notesFileGone: "Tahle poznámka už na disku není",
+    notesOpenOmawrite: "Otevřít v Omawrite",
+    notesRenameAction: "Přejmenovat"
   }
 }
 

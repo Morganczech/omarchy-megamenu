@@ -15,6 +15,7 @@ Item {
   property string readOnlyMessage: ""
   property string currentPath: ""
   property string foldersLabel: ""
+  property string omawriteLabel: ""
   property string allLabel: "All"
   property color foreground: "#dddddd"
   property string fontFamily: ""
@@ -25,6 +26,8 @@ Item {
   signal draftEdited(string text)
   signal saveRequested()
   signal foldersRequested()
+  signal omawriteRequested()
+  signal noteMenuRequested(string path, real x, real y)
   signal filterRequested(string id)
 
   function focusEditor() {
@@ -297,8 +300,16 @@ Item {
             id: noteMouse
             anchors.fill: parent
             hoverEnabled: true
+            acceptedButtons: Qt.LeftButton | Qt.RightButton
             cursorShape: Qt.PointingHandCursor
-            onClicked: pane.noteChosen(String(modelData.path || ""))
+            onClicked: function (mouse) {
+              if (mouse.button === Qt.RightButton) {
+                var pos = noteMouse.mapToItem(pane, mouse.x, mouse.y)
+                pane.noteMenuRequested(String(modelData.path || ""), pos.x, pos.y)
+                return
+              }
+              pane.noteChosen(String(modelData.path || ""))
+            }
           }
         }
       }
@@ -316,10 +327,23 @@ Item {
         : Util.alpha(pane.foreground, 0.14)
       clip: true
 
+      Button {
+        id: omawriteButton
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.margins: Style.space(8)
+        z: 2
+        visible: String(pane.draftText || "").trim().length > 0 || String(pane.currentPath || "").length > 0
+        text: pane.omawriteLabel
+        bordered: true
+        onClicked: pane.omawriteRequested()
+      }
+
       ScrollView {
         id: editorScroll
         anchors.fill: parent
         anchors.margins: Style.space(8)
+        anchors.topMargin: omawriteButton.visible ? omawriteButton.height + Style.space(12) : Style.space(8)
 
         TextArea {
           id: editor
