@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import errno
 import json
 import os
 import stat
@@ -160,7 +161,9 @@ def _read(request):
             return {"ok": True, "frontmatter": "", "body": "", "mtime": int(st.st_mtime), "tooLarge": True}
         with open(path, encoding="utf-8") as handle:
             frontmatter, body = _split(handle.read())
-    except OSError:
+    except OSError as exc:
+        if exc.errno == errno.ENOENT:
+            return {"ok": False, "error": "missing", "frontmatter": "", "body": "", "mtime": 0, "tooLarge": False}
         return denied
     return {"ok": True, "frontmatter": frontmatter, "body": body, "mtime": int(st.st_mtime), "tooLarge": False}
 

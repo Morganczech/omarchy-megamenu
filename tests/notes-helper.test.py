@@ -48,6 +48,25 @@ class NotesHelperTest(unittest.TestCase):
         self.assertTrue(refused["tooLarge"])
         self.assertEqual(refused["body"], "")
 
+    def test_missing_path_is_distinct_from_unreadable(self):
+        missing = os.path.join(self.root, "gone.md")
+        result = notes.handle({"cmd": "read", "path": missing, "roots": [self.root]})
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"], "missing")
+        if os.geteuid() == 0:
+            return
+        locked = os.path.join(self.root, "locked.md")
+        with open(locked, "w", encoding="utf-8") as handle:
+            handle.write("keep\n")
+        os.chmod(locked, 0)
+        try:
+            denied = notes.handle({"cmd": "read", "path": locked, "roots": [self.root]})
+            self.assertFalse(denied["ok"])
+            self.assertEqual(denied["error"], "unreadable")
+            self.assertTrue(os.path.isfile(locked))
+        finally:
+            os.chmod(locked, 0o600)
+
     def test_write_preserves_frontmatter_and_failed_replace_keeps_original(self):
         path = os.path.join(self.root, "a.md")
         with open(path, "w", encoding="utf-8") as handle:

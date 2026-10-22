@@ -31,6 +31,7 @@ Item {
   property var notesQueue: []
   property bool scanNotesOnOpen: false
   property var noteDraft: ({ path: "", text: "", frontmatter: "", mtime: 0, dirty: false })
+  property int noteDraftToken: 0
   property bool noteReadOnly: false
   property bool noteEditorFocused: false
 
@@ -535,6 +536,8 @@ Item {
     }
     var files = root.noteFiles || []
     for (var i = 0; i < files.length; i++) consider(files[i] && files[i].path)
+    var cards = (root.data && root.data.notes && root.data.notes.cards) ? root.data.notes.cards : []
+    for (var c = 0; c < cards.length; c++) consider(cards[c] && cards[c].path)
     if (root.noteDraft && root.noteDraft.path) consider(root.noteDraft.path)
     return names
   }
@@ -663,20 +666,17 @@ Item {
       var current = root.noteDraft || root.emptyNoteDraft()
       var textNow = String(current.text || "")
       var sameBody = textNow === writtenText
-      root.noteDraft.dirty = false
-      root.noteDraft.path = res.path
-      root.noteDraft.mtime = res.mtime
       root.noteDraft = {
         path: String(res.path || path),
         text: textNow,
         frontmatter: String(current.frontmatter || frontmatter),
         mtime: Number(res.mtime) || 0,
-        dirty: sameBody ? false : true
+        dirty: !sameBody
       }
       root.noteReadOnly = false
       root.rememberWrittenNote(root.noteDraft.path, root.noteDraft.mtime, writtenText)
       root.scanNotes()
-      if (done) done(true)
+      if (done) done(sameBody)
     })
   }
 
@@ -704,8 +704,13 @@ Item {
         root.showStatus(root.tr("notesScanFailed"))
         return
       }
+      root.noteDraftToken = root.noteDraftToken + 1
+      var token = root.noteDraftToken
       root.runNotes({ cmd: "read", path: path, roots: roots }, function (res) {
+        if (token !== root.noteDraftToken) return
+        var draft = root.noteDraft || root.emptyNoteDraft()
         if (res && res.ok && res.tooLarge) {
+          if (draft.dirty) return
           root.noteReadOnly = true
           root.noteDraft = {
             path: path,
@@ -717,14 +722,15 @@ Item {
           return
         }
         if (!res || !res.ok) {
-          var gone = !!(res && res.ok === false && String(res.error || "") === "unreadable")
-          if (gone) {
+          var missing = !!(res && res.ok === false && String(res.error || "") === "missing")
+          if (missing && !draft.dirty) {
             root.dropMissingNote(path)
             return
           }
           root.showStatus(root.tr("notesScanFailed"))
           return
         }
+        if (draft.dirty) return
         root.noteReadOnly = false
         root.noteDraft = {
           path: path,
@@ -752,6 +758,7 @@ Item {
       return
     }
     function openEmpty() {
+      root.noteDraftToken = root.noteDraftToken + 1
       root.clearNoteDraft()
       Qt.callLater(function () {
         if (notePane) notePane.focusEditor()
@@ -779,7 +786,10 @@ Item {
       return
     }
     var text = String((root.noteDraft && root.noteDraft.text) || "")
-    if (!text.trim()) root.clearNoteDraft()
+    if (!text.trim()) {
+      root.noteDraftToken = root.noteDraftToken + 1
+      root.clearNoteDraft()
+    }
     if (then) then()
   }
 
