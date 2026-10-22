@@ -179,7 +179,10 @@ var STRINGS = {
     // Notes
     notesInboxName: "Unsorted",
     notesScanFailed: "Could not refresh notes",
-    notesRootSkipped: "A notes folder was skipped"
+    notesRootSkipped: "A notes folder was skipped",
+    notesTooLarge: "This note is too large to edit here",
+    notesSaveFailed: "Could not save the note",
+    notesFoldersBtn: "Folders"
   },
 
   cs: {
@@ -354,7 +357,10 @@ var STRINGS = {
     // Notes
     notesInboxName: "Nezařazené",
     notesScanFailed: "Poznámky se nepodařilo obnovit",
-    notesRootSkipped: "Složka s poznámkami byla přeskočena"
+    notesRootSkipped: "Složka s poznámkami byla přeskočena",
+    notesTooLarge: "Tato poznámka je na úpravu tady příliš velká",
+    notesSaveFailed: "Poznámku se nepodařilo uložit",
+    notesFoldersBtn: "Složky"
   }
 }
 

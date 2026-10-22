@@ -30,6 +30,9 @@ Item {
   property bool pendingNewNote: false
   property var notesQueue: []
   property bool scanNotesOnOpen: false
+  property var noteDraft: ({ path: "", text: "", frontmatter: "", mtime: 0, dirty: false })
+  property bool noteReadOnly: false
+  property bool noteEditorFocused: false
 
   property bool opened: false
   property bool dirReady: false
@@ -153,6 +156,15 @@ Item {
 
   // Computed properties for current view
   readonly property string activeSpaceId: (root.data && root.data.activeSpaceId) ? root.data.activeSpaceId : "dev-matrix"
+  readonly property var activeSpace: {
+    var spaces = (root.data && root.data.spaces) ? root.data.spaces : []
+    for (var i = 0; i < spaces.length; i++) {
+      if (spaces[i] && spaces[i].id === root.activeSpaceId) return spaces[i]
+    }
+    return null
+  }
+  readonly property bool notesSpaceActive: !!(root.activeSpace && String(root.activeSpace.type || "") === "notes")
+  readonly property var notesModel: root.buildNotesModel(root.data, root.noteFiles)
   readonly property var currentCategories: Storage.categoriesForSpace(root.data, root.activeSpaceId)
   readonly property var currentSpaceItems: Storage.itemsForSpace(root.data, root.activeSpaceId)
   readonly property var pinnedOrbit: Storage.pinnedOrbitForSpace(root.data, root.activeSpaceId)
@@ -331,10 +343,12 @@ Item {
   }
 
   function dismiss() {
-    root.close()
-    if (root.shell && typeof root.shell.hide === "function") {
-      root.shell.hide((root.manifest && root.manifest.id) || "gruut.megamenu")
-    }
+    root.finishNoteLeave(function () {
+      root.close()
+      if (root.shell && typeof root.shell.hide === "function") {
+        root.shell.hide((root.manifest && root.manifest.id) || "gruut.megamenu")
+      }
+    })
   }
 
   function toggle() {
@@ -494,7 +508,7 @@ Item {
     notesProc.running = true
   }
 
-  function scanNotes() {
+  function noteWriteRoots() {
     var notes = root.data && root.data.notes ? root.data.notes : { writeRoot: "", roots: [] }
     var roots = []
     if (notes.writeRoot) roots.push(notes.writeRoot)
@@ -502,7 +516,275 @@ Item {
     for (var i = 0; i < extra.length; i++) {
       if (extra[i] && roots.indexOf(extra[i]) === -1) roots.push(extra[i])
     }
-    root.runNotes({ cmd: "scan", roots: roots }, function (res) {
+    return roots
+  }
+
+  function noteNamesInWriteRoot(writeRoot) {
+    var rootPath = String(writeRoot || "").replace(/\/+$/, "")
+    var names = []
+    var seen = {}
+    function consider(filePath) {
+      var value = String(filePath || "")
+      if (!value) return
+      var slash = value.lastIndexOf("/")
+      var dir = slash >= 0 ? value.slice(0, slash).replace(/\/+$/, "") : ""
+      var name = slash >= 0 ? value.slice(slash + 1) : value
+      if (dir !== rootPath || !name || seen[name]) return
+      seen[name] = true
+      names.push(name)
+    }
+    var files = root.noteFiles || []
+    for (var i = 0; i < files.length; i++) consider(files[i] && files[i].path)
+    if (root.noteDraft && root.noteDraft.path) consider(root.noteDraft.path)
+    return names
+  }
+
+  function emptyNoteDraft() {
+    return { path: "", text: "", frontmatter: "", mtime: 0, dirty: false }
+  }
+
+  function clearNoteDraft() {
+    root.noteReadOnly = false
+    root.noteDraft = root.emptyNoteDraft()
+  }
+
+  function noteDraftNeedsSave() {
+    var draft = root.noteDraft || {}
+    return !!(draft.dirty && String(draft.text || "").trim())
+  }
+
+  function buildNotesModel(data, files) {
+    var notes = data && data.notes ? data.notes : null
+    var cards = notes && notes.cards ? notes.cards : []
+    var incoming = files || []
+    var byPath = {}
+    for (var i = 0; i < incoming.length; i++) {
+      var file = incoming[i]
+      if (file && file.path) byPath[String(file.path)] = file
+    }
+    var out = []
+    for (var c = 0; c < cards.length; c++) {
+      var card = cards[c]
+      if (!card || !card.path) continue
+      var match = byPath[String(card.path)]
+      if (!match) continue
+      out.push({
+        path: String(card.path),
+        title: String(match.title || ""),
+        badgeText: String(card.badgeText || ""),
+        colorRole: String(card.colorRole || ""),
+        categoryId: String(card.categoryId || ""),
+        pinnedSlot: Math.round(Number(card.pinnedSlot) || 0),
+        mtime: Number(match.mtime) || 0,
+        tooLarge: match.tooLarge === true
+      })
+    }
+    return out
+  }
+
+  function rememberWrittenNote(path, mtime, body) {
+    var files = root.noteFiles ? root.noteFiles.slice() : []
+    var title = Storage.noteListTitle(String(body || ""), "note")
+    for (var i = 0; i < files.length; i++) {
+      if (files[i] && String(files[i].path) === String(path)) {
+        files[i] = {
+          path: String(path),
+          title: title,
+          mtime: Number(mtime) || 0,
+          size: Number(files[i].size) || 0,
+          tooLarge: false
+        }
+        root.noteFiles = files
+        return
+      }
+    }
+    files.push({
+      path: String(path),
+      title: title,
+      mtime: Number(mtime) || 0,
+      size: 0,
+      tooLarge: false
+    })
+    root.noteFiles = files
+  }
+
+  function applyNoteDraftText(text) {
+    if (root.noteReadOnly) return
+    var draft = root.noteDraft || root.emptyNoteDraft()
+    if (String(draft.text || "") === String(text || "")) return
+    root.noteDraft = {
+      path: String(draft.path || ""),
+      text: String(text || ""),
+      frontmatter: String(draft.frontmatter || ""),
+      mtime: Number(draft.mtime) || 0,
+      dirty: true
+    }
+  }
+
+  function saveCurrentNote(done) {
+    var draft = root.noteDraft || root.emptyNoteDraft()
+    var text = String(draft.text || "")
+    if (!text.trim()) {
+      if (root.noteReadOnly) {
+        if (done) done(true)
+        return
+      }
+      root.clearNoteDraft()
+      if (done) done(true)
+      return
+    }
+    var notes = root.data && root.data.notes ? root.data.notes : { writeRoot: "", roots: [] }
+    var path = String(draft.path || "")
+    var roots = root.noteWriteRoots()
+    var frontmatter = String(draft.frontmatter || "")
+    if (!path) {
+      var writeRoot = String(notes.writeRoot || "")
+      var filename = Storage.noteFilename(Storage.noteListTitle(text, "note"), root.noteNamesInWriteRoot(writeRoot))
+      path = writeRoot.replace(/\/+$/, "") + "/" + filename
+    }
+    if (!path || !Storage.notePathAllowed(path, roots)) {
+      root.showStatus(root.tr("notesSaveFailed"))
+      if (done) done(false)
+      return
+    }
+    var writtenText = text
+    root.runNotes({
+      cmd: "write",
+      path: path,
+      roots: roots,
+      frontmatter: frontmatter,
+      body: text
+    }, function (res) {
+      if (!res || !res.ok) {
+        root.showStatus(root.tr("notesSaveFailed"))
+        if (done) done(false)
+        return
+      }
+      var current = root.noteDraft || root.emptyNoteDraft()
+      var textNow = String(current.text || "")
+      var sameBody = textNow === writtenText
+      root.noteDraft.dirty = false
+      root.noteDraft.path = res.path
+      root.noteDraft.mtime = res.mtime
+      root.noteDraft = {
+        path: String(res.path || path),
+        text: textNow,
+        frontmatter: String(current.frontmatter || frontmatter),
+        mtime: Number(res.mtime) || 0,
+        dirty: sameBody ? false : true
+      }
+      root.noteReadOnly = false
+      root.rememberWrittenNote(root.noteDraft.path, root.noteDraft.mtime, writtenText)
+      root.scanNotes()
+      if (done) done(true)
+    })
+  }
+
+  function dropMissingNote(path) {
+    var next = Storage.cloneData(root.data)
+    if (!next.notes || typeof next.notes !== "object") {
+      next.notes = { writeRoot: "", roots: [], cards: [] }
+    }
+    var cards = next.notes.cards || []
+    var kept = []
+    for (var i = 0; i < cards.length; i++) {
+      if (cards[i] && String(cards[i].path) !== String(path)) kept.push(cards[i])
+    }
+    next.notes.cards = kept
+    root.clearNoteDraft()
+    root.commitData(next)
+  }
+
+  function selectNote(path) {
+    path = String(path || "")
+    if (!path) return
+    function readIt() {
+      var roots = root.noteWriteRoots()
+      if (!Storage.notePathAllowed(path, roots)) {
+        root.showStatus(root.tr("notesScanFailed"))
+        return
+      }
+      root.runNotes({ cmd: "read", path: path, roots: roots }, function (res) {
+        if (res && res.ok && res.tooLarge) {
+          root.noteReadOnly = true
+          root.noteDraft = {
+            path: path,
+            text: "",
+            frontmatter: "",
+            mtime: Number(res.mtime) || 0,
+            dirty: false
+          }
+          return
+        }
+        if (!res || !res.ok) {
+          var gone = !!(res && res.ok === false && String(res.error || "") === "unreadable")
+          if (gone) {
+            root.dropMissingNote(path)
+            return
+          }
+          root.showStatus(root.tr("notesScanFailed"))
+          return
+        }
+        root.noteReadOnly = false
+        root.noteDraft = {
+          path: path,
+          text: String(res.body || ""),
+          frontmatter: String(res.frontmatter || ""),
+          mtime: Number(res.mtime) || 0,
+          dirty: false
+        }
+      })
+    }
+    if (root.noteDraftNeedsSave()) {
+      root.saveCurrentNote(function (ok) {
+        if (!ok) return
+        readIt()
+      })
+      return
+    }
+    readIt()
+  }
+
+  function beginNoteDraft() {
+    var notes = root.data && root.data.notes ? root.data.notes : {}
+    if (!String(notes.writeRoot || "")) {
+      root.activeModal = "noteFolders"
+      return
+    }
+    function openEmpty() {
+      root.clearNoteDraft()
+      Qt.callLater(function () {
+        if (notePane) notePane.focusEditor()
+      })
+    }
+    if (root.noteDraftNeedsSave()) {
+      root.saveCurrentNote(function (ok) {
+        if (!ok) return
+        openEmpty()
+      })
+      return
+    }
+    openEmpty()
+  }
+
+  function finishNoteLeave(then) {
+    if (!root.notesSpaceActive) {
+      if (then) then()
+      return
+    }
+    if (root.noteDraftNeedsSave()) {
+      root.saveCurrentNote(function (ok) {
+        if (ok && then) then()
+      })
+      return
+    }
+    var text = String((root.noteDraft && root.noteDraft.text) || "")
+    if (!text.trim()) root.clearNoteDraft()
+    if (then) then()
+  }
+
+  function scanNotes() {
+    root.runNotes({ cmd: "scan", roots: root.noteWriteRoots() }, function (res) {
       if (!res || !res.ok) {
         root.noteError = root.tr("notesScanFailed")
         return
@@ -786,12 +1068,19 @@ Item {
 
   function switchSpace(spaceId) {
     if (!spaceId) return
-    var next = Storage.cloneData(root.data)
-    next.activeSpaceId = spaceId
-    root.activeFilter = "all"
-    root.contextMenuOpen = false
-    root.spacesDropdownOpen = false
-    root.commitData(next)
+    function go() {
+      var next = Storage.cloneData(root.data)
+      next.activeSpaceId = spaceId
+      root.activeFilter = "all"
+      root.contextMenuOpen = false
+      root.spacesDropdownOpen = false
+      root.commitData(next)
+    }
+    if (spaceId === root.activeSpaceId) {
+      go()
+      return
+    }
+    root.finishNoteLeave(go)
   }
 
   function cycleSpace(delta) {
@@ -1301,8 +1590,10 @@ Item {
 
     if (root.activeModal !== "") return
 
-    // Quick Orbit [1-6] with Alt+1..6 or plain 1..6 when search input is empty
+    // Quick Orbit [1-6] with Alt+1..6 or plain 1..6 when search input is empty.
+    // A focused note editor keeps the digit. Orbit selection of a note is later.
     if (event.key >= Qt.Key_1 && event.key <= Qt.Key_6) {
+      if (root.noteEditorFocused) return
       var slotIdx = event.key - Qt.Key_1
       if (alt || (!searchInput.activeFocus) || (root.searchQuery.length === 0 && !ctrl)) {
         var orbitItem = root.pinnedOrbit[slotIdx]
@@ -1322,7 +1613,8 @@ Item {
     }
 
     if (ctrl && event.key === Qt.Key_N) {
-      root.openAddItemModal("", 0)
+      if (root.notesSpaceActive) root.beginNoteDraft()
+      else root.openAddItemModal("", 0)
       event.accepted = true
       return
     }
@@ -2142,7 +2434,10 @@ Item {
               text: root.tr("addItemBtn")
               bordered: true
               tooltipText: root.tr("addItemTooltip")
-              onClicked: root.openAddItemModal("", 0)
+              onClicked: {
+                if (root.notesSpaceActive) root.beginNoteDraft()
+                else root.openAddItemModal("", 0)
+              }
             }
 
             Button {
@@ -2296,7 +2591,8 @@ Item {
           Flickable {
             id: filterPillsScroll
             width: parent.width
-            height: Math.min(filterPillsFlow.implicitHeight, Style.space(60))
+            visible: !root.notesSpaceActive
+            height: root.notesSpaceActive ? 0 : Math.min(filterPillsFlow.implicitHeight, Style.space(60))
             contentWidth: width
             contentHeight: filterPillsFlow.implicitHeight
             clip: true
@@ -2457,6 +2753,7 @@ Item {
           width: parent.width
           spacing: Style.space(6)
           visible: !root.isCommandMode
+                   && !root.notesSpaceActive
                    && root.searchQuery.trim().length === 0
                    && root.frequentItems.length > 0
 
@@ -2808,7 +3105,7 @@ Item {
           Flickable {
             id: categoriesFlick
             anchors.fill: parent
-            visible: !root.isCommandMode
+            visible: !root.isCommandMode && !root.notesSpaceActive
             contentWidth: categoriesRow.implicitWidth
             contentHeight: height
             clip: true
@@ -3363,6 +3660,31 @@ Item {
                 }
               }
             }
+          }
+
+          NotePane {
+            id: notePane
+            anchors.fill: parent
+            visible: root.notesSpaceActive && !root.isCommandMode
+            notesModel: root.notesModel
+            categories: root.currentCategories
+            filter: root.activeFilter
+            draftText: root.noteDraft ? String(root.noteDraft.text || "") : ""
+            currentPath: root.noteDraft && root.noteDraft.path ? String(root.noteDraft.path) : ""
+            readOnly: root.noteReadOnly
+            readOnlyMessage: root.noteReadOnly ? root.tr("notesTooLarge") : ""
+            foldersLabel: root.tr("notesFoldersBtn")
+            allLabel: root.tr("filterAll")
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            searchField: searchInput
+            roleColorFor: function (role) { return root.roleColor(role) }
+            onNoteChosen: function (path) { root.selectNote(path) }
+            onDraftEdited: function (text) { root.applyNoteDraftText(text) }
+            onSaveRequested: function () { root.saveCurrentNote() }
+            onFoldersRequested: root.activeModal = "noteFolders"
+            onFilterRequested: function (id) { root.activeFilter = id }
+            onEditorFocusedChanged: root.noteEditorFocused = editorFocused
           }
 
           // 4B. System Application Search View (when typing `> query`)
