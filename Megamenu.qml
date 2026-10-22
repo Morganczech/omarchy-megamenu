@@ -609,6 +609,7 @@ Item {
         if (done) done(true)
         return
       }
+      root.noteDraftToken = root.noteDraftToken + 1
       root.clearNoteDraft()
       if (done) done(true)
       return
