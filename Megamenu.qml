@@ -559,30 +559,7 @@ Item {
   function buildNotesModel(data, files) {
     var notes = data && data.notes ? data.notes : null
     var cards = notes && notes.cards ? notes.cards : []
-    var incoming = files || []
-    var byPath = {}
-    for (var i = 0; i < incoming.length; i++) {
-      var file = incoming[i]
-      if (file && file.path) byPath[String(file.path)] = file
-    }
-    var out = []
-    for (var c = 0; c < cards.length; c++) {
-      var card = cards[c]
-      if (!card || !card.path) continue
-      var match = byPath[String(card.path)]
-      if (!match) continue
-      out.push({
-        path: String(card.path),
-        title: String(match.title || ""),
-        badgeText: String(card.badgeText || ""),
-        colorRole: String(card.colorRole || ""),
-        categoryId: String(card.categoryId || ""),
-        pinnedSlot: Math.round(Number(card.pinnedSlot) || 0),
-        mtime: Number(match.mtime) || 0,
-        tooLarge: match.tooLarge === true
-      })
-    }
-    return out
+    return Storage.notesModelRows(cards, files || [])
   }
 
   function rememberWrittenNote(path, mtime, body) {
@@ -666,26 +643,25 @@ Item {
       }
       var savedPath = String(res.path || path)
       var savedMtime = Number(res.mtime) || 0
-      if (token !== root.noteDraftToken) {
+      var applied = Storage.noteWriteDraft(token, root.noteDraftToken, root.noteDraft, savedPath, savedMtime, writtenText, frontmatter)
+      if (!applied) {
         root.rememberWrittenNote(savedPath, savedMtime, writtenText)
         root.scanNotes()
         if (done) done(false)
         return
       }
-      var current = root.noteDraft || root.emptyNoteDraft()
-      var textNow = String(current.text || "")
-      var sameBody = textNow === writtenText
+      var written = applied.draft || {}
       root.noteDraft = {
-        path: savedPath,
-        text: textNow,
-        frontmatter: String(current.frontmatter || frontmatter),
-        mtime: savedMtime,
-        dirty: !sameBody
+        path: String(written.path || ""),
+        text: String(written.text || ""),
+        frontmatter: String(written.frontmatter || ""),
+        mtime: Number(written.mtime) || 0,
+        dirty: written.dirty === true
       }
       root.noteReadOnly = false
       root.rememberWrittenNote(savedPath, savedMtime, writtenText)
       root.scanNotes()
-      if (done) done(sameBody)
+      if (done) done(applied.doneOk)
     })
   }
 
@@ -700,6 +676,8 @@ Item {
       if (cards[i] && String(cards[i].path) !== String(path)) kept.push(cards[i])
     }
     next.notes.cards = kept
+    var settled = Storage.noteReadSettlement(root.noteDraftToken, root.noteDraft || root.emptyNoteDraft(), path, { ok: false, error: "missing" })
+    if (settled.action === "drop") root.noteDraftToken = settled.token
     root.clearNoteDraft()
     root.commitData(next)
   }
@@ -718,34 +696,24 @@ Item {
       root.runNotes({ cmd: "read", path: path, roots: roots }, function (res) {
         if (token !== root.noteDraftToken) return
         var draft = root.noteDraft || root.emptyNoteDraft()
-        if (res && res.ok && res.tooLarge) {
-          if (draft.dirty) return
-          root.noteReadOnly = true
-          root.noteDraft = {
-            path: path,
-            text: "",
-            frontmatter: "",
-            mtime: Number(res.mtime) || 0,
-            dirty: false
-          }
-          return
-        }
-        if (!res || !res.ok) {
-          var missing = !!(res && res.ok === false && String(res.error || "") === "missing")
-          if (missing && !draft.dirty) {
-            root.dropMissingNote(path)
-            return
-          }
+        var settled = Storage.noteReadSettlement(token, draft, path, res)
+        if (settled.action === "keep") return
+        if (settled.action === "fail") {
           root.showStatus(root.tr("notesScanFailed"))
           return
         }
-        if (draft.dirty) return
-        root.noteReadOnly = false
+        if (settled.action === "drop") {
+          root.dropMissingNote(path)
+          return
+        }
+        root.noteDraftToken = settled.token
+        root.noteReadOnly = settled.readOnly === true
+        var nextDraft = settled.draft || {}
         root.noteDraft = {
-          path: path,
-          text: String(res.body || ""),
-          frontmatter: String(res.frontmatter || ""),
-          mtime: Number(res.mtime) || 0,
+          path: String(nextDraft.path || ""),
+          text: String(nextDraft.text || ""),
+          frontmatter: String(nextDraft.frontmatter || ""),
+          mtime: Number(nextDraft.mtime) || 0,
           dirty: false
         }
       })

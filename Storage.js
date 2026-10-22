@@ -1510,6 +1510,110 @@ function emptyNotes() {
   return { writeRoot: "", roots: [], cards: [] }
 }
 
+function notePathStem(path) {
+  var base = String(path || "").split("/").pop()
+  var dot = base.lastIndexOf(".")
+  if (dot > 0) return base.slice(0, dot)
+  return base
+}
+
+function notesModelRows(cards, files) {
+  var incoming = Array.isArray(files) ? files : []
+  var byPath = {}
+  for (var i = 0; i < incoming.length; i++) {
+    var file = incoming[i]
+    if (file && file.path) byPath[String(file.path)] = file
+  }
+  var list = Array.isArray(cards) ? cards : []
+  var out = []
+  for (var c = 0; c < list.length; c++) {
+    var card = list[c]
+    if (!card || !card.path) continue
+    var pinned = Math.round(Number(card.pinnedSlot) || 0)
+    var match = byPath[String(card.path)]
+    if (!match) {
+      out.push({
+        path: String(card.path),
+        title: noteListTitle("", notePathStem(card.path)),
+        badgeText: String(card.badgeText || ""),
+        colorRole: String(card.colorRole || ""),
+        categoryId: String(card.categoryId || ""),
+        pinnedSlot: pinned,
+        mtime: 0,
+        tooLarge: false
+      })
+      continue
+    }
+    out.push({
+      path: String(card.path),
+      title: String(match.title || ""),
+      badgeText: String(card.badgeText || ""),
+      colorRole: String(card.colorRole || ""),
+      categoryId: String(card.categoryId || ""),
+      pinnedSlot: pinned,
+      mtime: Number(match.mtime) || 0,
+      tooLarge: match.tooLarge === true
+    })
+  }
+  return out
+}
+
+function noteReadSettlement(token, draft, path, res) {
+  var current = draft && typeof draft === "object" ? draft : {}
+  var dirty = !!current.dirty
+  if (res && res.ok && res.tooLarge) {
+    if (dirty) return { action: "keep", token: token }
+    return {
+      action: "replace",
+      token: token + 1,
+      readOnly: true,
+      draft: {
+        path: String(path || ""),
+        text: "",
+        frontmatter: "",
+        mtime: Number(res.mtime) || 0,
+        dirty: false
+      }
+    }
+  }
+  if (!res || !res.ok) {
+    var missing = !!(res && res.ok === false && String(res.error || "") === "missing")
+    if (missing && !dirty) return { action: "drop", token: token + 1 }
+    return { action: "fail", token: token }
+  }
+  if (dirty) return { action: "keep", token: token }
+  return {
+    action: "replace",
+    token: token + 1,
+    readOnly: false,
+    draft: {
+      path: String(path || ""),
+      text: String(res.body || ""),
+      frontmatter: String(res.frontmatter || ""),
+      mtime: Number(res.mtime) || 0,
+      dirty: false
+    }
+  }
+}
+
+function noteWriteDraft(capturedToken, currentToken, currentDraft, savedPath, savedMtime, writtenText, frontmatter) {
+  if (capturedToken !== currentToken) return null
+  var current = currentDraft && typeof currentDraft === "object" ? currentDraft : {}
+  var textNow = String(current.text || "")
+  var sameBody = textNow === String(writtenText || "")
+  return {
+    readOnly: false,
+    doneOk: sameBody,
+    draft: {
+      path: String(savedPath || ""),
+      text: textNow,
+      frontmatter: String(current.frontmatter || frontmatter || ""),
+      mtime: Number(savedMtime) || 0,
+      dirty: !sameBody
+    }
+  }
+}
+
 function mergeNoteScan(notes, files, inboxCategoryId, truncated) {
   var base = notes && typeof notes === "object" ? notes : emptyNotes()
   var cards = Array.isArray(base.cards) ? base.cards : []
@@ -1593,6 +1697,9 @@ if (typeof module !== "undefined") {
     noteFilename: noteFilename,
     notePathAllowed: notePathAllowed,
     mergeNoteScan: mergeNoteScan,
+    notesModelRows: notesModelRows,
+    noteReadSettlement: noteReadSettlement,
+    noteWriteDraft: noteWriteDraft,
     ensureNotesModel: ensureNotesModel
   }
 }

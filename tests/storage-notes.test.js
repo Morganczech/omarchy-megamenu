@@ -45,6 +45,92 @@ const truncated = S.mergeNoteScan(notes, [
 ], "cat-notes-inbox", true)
 assert.ok(truncated.cards.some(function (c) { return c.path === "/gone.md" }))
 
+const hiddenCards = [
+  { path: "/notes/keep.md", categoryId: "cat-work", colorRole: "green", badgeText: "Pin", pinnedSlot: 2 },
+  { path: "/notes/folder/later-note.md", categoryId: "cat-notes-inbox", colorRole: "blue", badgeText: "H", pinnedSlot: 1 }
+]
+const visibleRows = S.notesModelRows(hiddenCards, [
+  { path: "/notes/keep.md", title: "Keep", mtime: 9, size: 10, tooLarge: false }
+])
+assert.strictEqual(visibleRows.length, 2)
+const hiddenRow = visibleRows[1]
+assert.strictEqual(hiddenRow.path, "/notes/folder/later-note.md")
+assert.strictEqual(hiddenRow.title, S.noteListTitle("", "later-note"))
+assert.strictEqual(hiddenRow.title, "later-note")
+assert.strictEqual(hiddenRow.badgeText, "H")
+assert.strictEqual(hiddenRow.colorRole, "blue")
+assert.strictEqual(hiddenRow.categoryId, "cat-notes-inbox")
+assert.strictEqual(hiddenRow.pinnedSlot, 1)
+assert.strictEqual(hiddenRow.mtime, 0)
+assert.strictEqual(hiddenRow.tooLarge, false)
+assert.strictEqual(visibleRows[0].title, "Keep")
+assert.strictEqual(visibleRows[0].mtime, 9)
+assert.strictEqual(visibleRows[0].tooLarge, false)
+assert.strictEqual(hiddenCards.length, 2)
+
+const cleanA = { path: "/notes/a.md", text: "A", frontmatter: "", mtime: 1, dirty: false }
+const typedA = { path: "/notes/a.md", text: "typed", frontmatter: "fm", mtime: 1, dirty: true }
+const readB = { ok: true, body: "B", frontmatter: "---\nx\n---", mtime: 4 }
+const openedB = S.noteReadSettlement(1, cleanA, "/notes/b.md", readB)
+assert.strictEqual(openedB.action, "replace")
+assert.strictEqual(openedB.token, 2)
+assert.strictEqual(openedB.readOnly, false)
+assert.strictEqual(openedB.draft.path, "/notes/b.md")
+assert.strictEqual(openedB.draft.text, "B")
+assert.strictEqual(openedB.draft.frontmatter, "---\nx\n---")
+assert.strictEqual(openedB.draft.mtime, 4)
+assert.strictEqual(openedB.draft.dirty, false)
+assert.notStrictEqual(1, openedB.token)
+
+const keptTyped = S.noteReadSettlement(1, typedA, "/notes/b.md", readB)
+assert.strictEqual(keptTyped.action, "keep")
+assert.strictEqual(keptTyped.token, 1)
+
+const tooBig = S.noteReadSettlement(1, cleanA, "/notes/big.md", { ok: true, tooLarge: true, mtime: 7 })
+assert.strictEqual(tooBig.action, "replace")
+assert.strictEqual(tooBig.token, 2)
+assert.strictEqual(tooBig.readOnly, true)
+assert.strictEqual(tooBig.draft.text, "")
+assert.strictEqual(tooBig.draft.frontmatter, "")
+assert.strictEqual(tooBig.draft.path, "/notes/big.md")
+assert.strictEqual(tooBig.draft.mtime, 7)
+assert.strictEqual(tooBig.draft.dirty, false)
+
+const typedTooBig = S.noteReadSettlement(1, typedA, "/notes/big.md", { ok: true, tooLarge: true, mtime: 7 })
+assert.strictEqual(typedTooBig.action, "keep")
+assert.strictEqual(typedTooBig.token, 1)
+
+const missingClean = S.noteReadSettlement(1, cleanA, "/gone.md", { ok: false, error: "missing" })
+assert.strictEqual(missingClean.action, "drop")
+assert.strictEqual(missingClean.token, 2)
+
+const missingTyped = S.noteReadSettlement(1, typedA, "/gone.md", { ok: false, error: "missing" })
+assert.strictEqual(missingTyped.action, "fail")
+assert.strictEqual(missingTyped.token, 1)
+
+const unreadable = S.noteReadSettlement(1, cleanA, "/notes/a.md", { ok: false, error: "unreadable" })
+assert.strictEqual(unreadable.action, "fail")
+assert.strictEqual(unreadable.token, 1)
+
+const crashed = S.noteReadSettlement(1, cleanA, "/notes/a.md", null)
+assert.strictEqual(crashed.action, "fail")
+assert.strictEqual(crashed.token, 1)
+
+const staleWrite = S.noteWriteDraft(1, openedB.token, openedB.draft, "/notes/a.md", 9, "A", "")
+assert.strictEqual(staleWrite, null)
+const liveWrite = S.noteWriteDraft(1, 1, typedA, "/notes/a.md", 9, "A", "")
+assert.strictEqual(liveWrite.draft.path, "/notes/a.md")
+assert.strictEqual(liveWrite.draft.text, "typed")
+assert.strictEqual(liveWrite.draft.frontmatter, "fm")
+assert.strictEqual(liveWrite.draft.mtime, 9)
+assert.strictEqual(liveWrite.draft.dirty, true)
+assert.strictEqual(liveWrite.doneOk, false)
+assert.strictEqual(liveWrite.readOnly, false)
+const sameWrite = S.noteWriteDraft(4, 4, { path: "/notes/a.md", text: "A", frontmatter: "", mtime: 1, dirty: true }, "/notes/a.md", 3, "A", "")
+assert.strictEqual(sameWrite.doneOk, true)
+assert.strictEqual(sameWrite.draft.dirty, false)
+assert.strictEqual(sameWrite.draft.text, "A")
+
 const fresh = S.ensureNotesModel(S.defaultData(), "Unsorted")
 assert.ok(fresh.spaces.some(function (s) { return s.id === "notes" && s.type === "notes" }))
 assert.ok(fresh.categories.some(function (c) { return c.id === "cat-notes-inbox" && c.name === "Unsorted" }))
