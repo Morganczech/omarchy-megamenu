@@ -426,7 +426,8 @@ function defaultData() {
         badgeText: "Core",
         colorRole: "blue"
       }
-    ]
+    ],
+    notes: { writeRoot: "", roots: [], cards: [] }
   }
 }
 
@@ -518,7 +519,8 @@ function parse(rawText) {
     spaces.push({
       id: sid,
       name: spName,
-      icon: String(sp.icon || "󰀻")
+      icon: String(sp.icon || "󰀻"),
+      type: String(sp.type || "") === "notes" ? "notes" : ""
     })
     spaceIds[sid] = true
   }
@@ -566,14 +568,105 @@ function parse(rawText) {
   var rawLang = String(parsed.language || "auto").toLowerCase()
   var language = (rawLang === "en" || rawLang === "cs") ? rawLang : "auto"
 
-  return {
+  return ensureNotesModel({
     version: 1,
     language: language,
     activeSpaceId: activeSpaceId,
     spaces: spaces,
     categories: categories,
-    items: items
+    items: items,
+    notes: sanitizeNotes(parsed.notes)
+  })
+}
+
+function sanitizeNotes(raw) {
+  var base = (raw && typeof raw === "object" && !Array.isArray(raw)) ? raw : {}
+  var roots = []
+  var rawRoots = Array.isArray(base.roots) ? base.roots : []
+  for (var i = 0; i < rawRoots.length; i++) {
+    if (rawRoots[i] === undefined || rawRoots[i] === null) continue
+    var root = String(rawRoots[i])
+    if (!root) continue
+    roots.push(root)
   }
+  var cards = []
+  var rawCards = Array.isArray(base.cards) ? base.cards : []
+  for (var c = 0; c < rawCards.length; c++) {
+    var card = rawCards[c]
+    if (!card || typeof card !== "object") continue
+    var path = String(card.path || "")
+    if (!path) continue
+    var pinned = Number(card.pinnedSlot)
+    if (!isFinite(pinned)) pinned = 0
+    pinned = Math.round(pinned)
+    if (pinned < 0) pinned = 0
+    if (pinned > 6) pinned = 6
+    cards.push({
+      path: path,
+      categoryId: String(card.categoryId || ""),
+      colorRole: String(card.colorRole || ""),
+      badgeText: String(card.badgeText || ""),
+      pinnedSlot: pinned
+    })
+  }
+  return {
+    writeRoot: String(base.writeRoot || ""),
+    roots: roots,
+    cards: cards
+  }
+}
+
+function ensureNotesModel(data, inboxName) {
+  var src = (data && typeof data === "object") ? data : {}
+  var next = {}
+  for (var key in src) {
+    if (Object.prototype.hasOwnProperty.call(src, key)) next[key] = src[key]
+  }
+  next.spaces = Array.isArray(src.spaces) ? src.spaces.slice() : []
+  next.categories = Array.isArray(src.categories) ? src.categories.slice() : []
+
+  var hasNotesSpace = false
+  for (var i = 0; i < next.spaces.length; i++) {
+    if (next.spaces[i] && String(next.spaces[i].id) === "notes") {
+      hasNotesSpace = true
+      break
+    }
+  }
+  if (!hasNotesSpace) {
+    next.spaces.push({
+      id: "notes",
+      name: "Note",
+      icon: "󰈙",
+      type: "notes"
+    })
+  }
+
+  var hasInbox = false
+  for (var j = 0; j < next.categories.length; j++) {
+    if (next.categories[j] && String(next.categories[j].id) === "cat-notes-inbox") {
+      hasInbox = true
+      break
+    }
+  }
+  if (!hasInbox) {
+    var inbox = String(inboxName || "").trim()
+    if (!inbox) inbox = "Unsorted"
+    next.categories.push({
+      id: "cat-notes-inbox",
+      spaceId: "notes",
+      name: inbox,
+      icon: "󰈙",
+      colorRole: "yellow",
+      type: "static",
+      feedUrl: "",
+      feedMode: "all"
+    })
+  }
+
+  if (!next.notes || typeof next.notes !== "object" || Array.isArray(next.notes)) {
+    next.notes = { writeRoot: "", roots: [], cards: [] }
+  }
+  return next
 }
 
 function serialize(data) {
@@ -1499,6 +1592,7 @@ if (typeof module !== "undefined") {
     noteListTitle: noteListTitle,
     noteFilename: noteFilename,
     notePathAllowed: notePathAllowed,
-    mergeNoteScan: mergeNoteScan
+    mergeNoteScan: mergeNoteScan,
+    ensureNotesModel: ensureNotesModel
   }
 }
