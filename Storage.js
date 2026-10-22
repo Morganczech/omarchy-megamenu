@@ -568,7 +568,7 @@ function parse(rawText) {
   var rawLang = String(parsed.language || "auto").toLowerCase()
   var language = (rawLang === "en" || rawLang === "cs") ? rawLang : "auto"
 
-  return ensureNotesModel({
+  return {
     version: 1,
     language: language,
     activeSpaceId: activeSpaceId,
@@ -576,7 +576,7 @@ function parse(rawText) {
     categories: categories,
     items: items,
     notes: sanitizeNotes(parsed.notes)
-  })
+  }
 }
 
 function sanitizeNotes(raw) {

@@ -71,4 +71,26 @@ assert.strictEqual(parsed.notes.cards[0].pinnedSlot, 1)
 const cloned = S.cloneData(parsed)
 assert.strictEqual(cloned.notes.cards[0].path, "/notes/a.md")
 
+const legacyRaw = JSON.stringify({
+  version: 1,
+  activeSpaceId: "personal",
+  language: "en",
+  spaces: [{ id: "personal", name: "Personal", icon: "X" }],
+  categories: [],
+  items: []
+})
+const legacyParsed = S.parse(legacyRaw)
+assert.ok(!legacyParsed.spaces.some(function (s) { return s.id === "notes" }))
+assert.ok(!legacyParsed.categories.some(function (c) { return c.id === "cat-notes-inbox" }))
+assert.ok(Array.isArray(legacyParsed.notes.cards))
+
+const ensured = S.ensureNotesModel(legacyParsed, "Nezařazené")
+assert.ok(ensured.categories.some(function (c) {
+  return c.id === "cat-notes-inbox" && c.name === "Nezařazené"
+}))
+const ensuredAgain = S.ensureNotesModel(ensured, "Unsorted")
+assert.ok(ensuredAgain.categories.some(function (c) {
+  return c.id === "cat-notes-inbox" && c.name === "Nezařazené"
+}))
+
 console.log("storage-notes: all assertions ok")
