@@ -25,6 +25,12 @@ Item {
   readonly property string pluginDir: homeDir + "/.config/omarchy/plugins/gruut.megamenu"
   readonly property string currentThemeColorsPath: homeDir + "/.local/state/omarchy/current/theme/colors.toml"
 
+  property var noteFiles: []
+  property string noteError: ""
+  property bool pendingNewNote: false
+  property var notesQueue: []
+  property bool scanNotesOnOpen: false
+
   property bool opened: false
   property bool dirReady: false
   property bool storageReady: false
@@ -282,12 +288,18 @@ Item {
 
   // Lifecycle methods invoked by omarchy-shell
   function open(payloadJson) {
+    var action = ""
     try {
       var p = JSON.parse(payloadJson || "{}")
       if (p && (p.language === "en" || p.language === "cs")) {
         root.payloadLanguageOverride = p.language
       }
+      if (p && p.action) action = String(p.action)
     } catch (e) {}
+    if (action === "new-note") root.pendingNewNote = true
+    // dataFile.reload() hydrates asynchronously. scanNotes() runs at the end
+    // of that hydrate, including when the action is new-note.
+    root.scanNotesOnOpen = true
 
     root.opened = true
     root.contextMenuOpen = false
@@ -439,12 +451,68 @@ Item {
 
     root.data = parsed
     root.storageReady = true
-    if (!hasExisting) {
-      dataFile.setText(Storage.serialize(root.data))
-    }
+    var notesMissing = !root.notesSpacePresent(root.data)
+    root.data = Storage.ensureNotesModel(root.data, root.tr("notesInboxName"))
+    if (notesMissing) root.commitData(root.data)
+    else if (!hasExisting) dataFile.setText(Storage.serialize(root.data))
     root.ensureSelectedValid()
     root.queueMissingFavicons()
     root.refreshLiveFeeds(false, "")
+    // open() sets the flag before reload(). Keep scanning while the menu is
+    // open so a second load in the same open still refreshes the note list.
+    if (root.opened || root.scanNotesOnOpen) {
+      root.scanNotesOnOpen = false
+      root.scanNotes()
+    }
+  }
+
+  function notesSpacePresent(data) {
+    var spaces = data && data.spaces ? data.spaces : []
+    for (var i = 0; i < spaces.length; i++) {
+      if (spaces[i] && String(spaces[i].id) === "notes") return true
+    }
+    return false
+  }
+
+  function runNotes(request, callback) {
+    var queue = root.notesQueue ? root.notesQueue.slice() : []
+    queue.push({ request: request, callback: callback })
+    root.notesQueue = queue
+    root.pumpNotes()
+  }
+
+  function pumpNotes() {
+    if (notesProc.running) return
+    var queue = root.notesQueue ? root.notesQueue.slice() : []
+    if (!queue.length) return
+    var job = queue.shift()
+    root.notesQueue = queue
+    notesProc.pendingCallback = job.callback
+    var payload = JSON.stringify(job.request)
+    notesProc.pendingStdin = payload ? payload : "{}"
+    notesProc.stdinEnabled = true
+    notesProc.running = true
+  }
+
+  function scanNotes() {
+    var notes = root.data && root.data.notes ? root.data.notes : { writeRoot: "", roots: [] }
+    var roots = []
+    if (notes.writeRoot) roots.push(notes.writeRoot)
+    var extra = notes.roots || []
+    for (var i = 0; i < extra.length; i++) {
+      if (extra[i] && roots.indexOf(extra[i]) === -1) roots.push(extra[i])
+    }
+    root.runNotes({ cmd: "scan", roots: roots }, function (res) {
+      if (!res || !res.ok) {
+        root.noteError = root.tr("notesScanFailed")
+        return
+      }
+      var merged = Storage.mergeNoteScan(root.data.notes, res.files || [], "cat-notes-inbox", res.truncated === true)
+      root.data.notes = merged
+      root.noteFiles = res.files || []
+      root.noteError = (res.errors && res.errors.length) ? root.tr("notesRootSkipped") : ""
+      root.commitData(root.data)
+    })
   }
 
   function itemsForCategory(catOrId) {
@@ -1476,6 +1544,62 @@ Item {
           }
         }
       } catch (e) {}
+    }
+  }
+
+  Process {
+    id: notesProc
+    property var pendingCallback: null
+    // JSON body prepared before running = true. Quickshell write() is a no-op
+    // until the process exists, and notes.py's json.load needs EOF, so the
+    // body is written and the channel closed once the process has started.
+    property string pendingStdin: ""
+    command: [
+      "prlimit",
+      "--as=134217728",
+      "python3",
+      root.pluginDir + "/scripts/notes.py"
+    ]
+    stdinEnabled: true
+    running: false
+    stdout: StdioCollector {
+      id: notesOut
+      waitForEnd: true
+    }
+    onStarted: {
+      if (notesProc.pendingStdin.length > 0) {
+        notesProc.write(notesProc.pendingStdin)
+        notesProc.pendingStdin = ""
+      }
+      notesProc.stdinEnabled = false
+    }
+    onExited: {
+      var raw = String(notesOut.text || "").trim()
+      var res = null
+      try {
+        if (raw) res = JSON.parse(raw)
+      } catch (e) {
+        res = null
+      }
+      var cb = notesProc.pendingCallback
+      notesProc.pendingCallback = null
+      try {
+        if (cb) cb(res)
+      } finally {
+        root.pumpNotes()
+      }
+    }
+    onRunningChanged: {
+      // FailedToStart never emits exited. A normal exit clears the callback first.
+      if (notesProc.running || !notesProc.pendingCallback) return
+      var cb = notesProc.pendingCallback
+      notesProc.pendingCallback = null
+      notesProc.pendingStdin = ""
+      try {
+        if (cb) cb(null)
+      } finally {
+        root.pumpNotes()
+      }
     }
   }
 

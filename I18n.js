@@ -174,7 +174,12 @@ var STRINGS = {
     scanningBookmarksText: "Scanning installed browsers for bookmarks...",
     noBookmarksFoundText: "No browser bookmarks or ~/Downloads/bookmarks.html found.",
     linksCountSuffix: "links",
-    btnImportSelected: "Import selected folders"
+    btnImportSelected: "Import selected folders",
+
+    // Notes
+    notesInboxName: "Unsorted",
+    notesScanFailed: "Could not refresh notes",
+    notesRootSkipped: "A notes folder was skipped"
   },
 
   cs: {
@@ -344,7 +349,12 @@ var STRINGS = {
     scanningBookmarksText: "Hledám záložky v nainstalovaných prohlížečích...",
     noBookmarksFoundText: "Nebyly nalezeny žádné záložky v prohlížečích ani soubor bookmarks.html v ~/Downloads.",
     linksCountSuffix: "odkazů",
-    btnImportSelected: "Naimportovat vybrané složky"
+    btnImportSelected: "Naimportovat vybrané složky",
+
+    // Notes
+    notesInboxName: "Nezařazené",
+    notesScanFailed: "Poznámky se nepodařilo obnovit",
+    notesRootSkipped: "Složka s poznámkami byla přeskočena"
   }
 }
 
