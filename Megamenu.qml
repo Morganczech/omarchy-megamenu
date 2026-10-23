@@ -90,6 +90,9 @@ Item {
   property bool spacesDropdownOpen: false
   property real spacesDropdownX: 0
   property real spacesDropdownY: 0
+  property bool moreActionsOpen: false
+  property real moreActionsX: 0
+  property real moreActionsY: 0
 
   // Modals: "" | "editItem" | "editCategory" | "editSpace" | "importBookmarks" | "shortcut" | "noteFolders" | "noteRename" | "noteTrash"
   property string activeModal: ""
@@ -340,6 +343,7 @@ Item {
     root.opened = true
     root.contextMenuOpen = false
     root.spacesDropdownOpen = false
+    root.moreActionsOpen = false
     root.activeModal = ""
     root.searchQuery = ""
     root.selectedAppIndex = 0
@@ -365,6 +369,7 @@ Item {
   function close() {
     root.contextMenuOpen = false
     root.spacesDropdownOpen = false
+    root.moreActionsOpen = false
     root.activeModal = ""
     root.opened = false
   }
@@ -1625,6 +1630,7 @@ Item {
   function closeContextMenu() {
     root.contextMenuOpen = false
     root.spacesDropdownOpen = false
+    root.moreActionsOpen = false
     Qt.callLater(function() {
       if (root.activeModal === "" && searchInput) searchInput.forceActiveFocus()
     })
@@ -1633,6 +1639,7 @@ Item {
   function openContextMenuFor(item, globalX, globalY) {
     if (!item || item.isNoteResult === true) return
     root.spacesDropdownOpen = false
+    root.moreActionsOpen = false
     root.contextMenuItem = item
     root.contextMoveBrowseSpaceId = ""
     var menuW = Style.space(260)
@@ -1681,6 +1688,7 @@ Item {
       return
     }
     root.contextMenuOpen = false
+    root.moreActionsOpen = false
     if (anchorItem) {
       var pos = anchorItem.mapToItem(card, 0, anchorItem.height + Style.space(6))
       var menuW = Style.space(250)
@@ -1689,6 +1697,26 @@ Item {
       root.spacesDropdownY = Math.max(Style.space(44), pos.y)
     }
     root.spacesDropdownOpen = true
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  function toggleMoreActions(anchorItem) {
+    if (root.moreActionsOpen) {
+      root.closeContextMenu()
+      return
+    }
+    root.contextMenuOpen = false
+    root.spacesDropdownOpen = false
+    if (anchorItem) {
+      var pos = anchorItem.mapToItem(card, 0, anchorItem.height + Style.space(6))
+      var menuW = Style.space(220)
+      var maxX = card.width - menuW - Style.space(12)
+      // Anchor the right edge under the button, then keep the menu inside the card.
+      var rightAlignedX = anchorItem.mapToItem(card, anchorItem.width, 0).x - menuW
+      root.moreActionsX = Math.max(Style.space(12), Math.min(maxX, rightAlignedX))
+      root.moreActionsY = Math.max(Style.space(44), pos.y)
+    }
+    root.moreActionsOpen = true
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
@@ -2052,7 +2080,7 @@ Item {
     var alt = (event.modifiers & Qt.AltModifier) !== 0
 
     if (event.key === Qt.Key_Escape) {
-      if (root.contextMenuOpen || root.spacesDropdownOpen) {
+      if (root.contextMenuOpen || root.spacesDropdownOpen || root.moreActionsOpen) {
         root.closeContextMenu()
       } else if (root.activeModal !== "") {
         root.activeModal = ""
@@ -2635,7 +2663,7 @@ Item {
       anchors.fill: parent
       acceptedButtons: Qt.LeftButton | Qt.RightButton
       onPressed: {
-        if (root.contextMenuOpen || root.spacesDropdownOpen) {
+        if (root.contextMenuOpen || root.spacesDropdownOpen || root.moreActionsOpen) {
           root.closeContextMenu()
         } else if (root.activeModal !== "") {
           root.activeModal = ""
@@ -2662,6 +2690,7 @@ Item {
         onClicked: {
           root.contextMenuOpen = false
           root.spacesDropdownOpen = false
+          root.moreActionsOpen = false
         }
       }
 
@@ -2940,22 +2969,6 @@ Item {
             }
 
             Button {
-              text: root.browserHostRegistered ? root.tr("browserHostBtnOn") : root.tr("browserHostBtn")
-              bordered: true
-              tooltipText: root.browserHostRegistered
-                ? root.tr("browserHostTooltipOn")
-                : root.tr("browserHostTooltip")
-              onClicked: root.registerBrowserHost()
-            }
-
-            Button {
-              text: "󰗊 " + root.activeLang.toUpperCase() + (root.languagePref === "auto" ? " (A)" : "")
-              bordered: true
-              tooltipText: root.tr("langTooltip")
-              onClicked: root.cycleLanguage()
-            }
-
-            Button {
               text: root.tr("addItemBtn")
               bordered: true
               tooltipText: root.tr("addItemTooltip")
@@ -2973,17 +2986,18 @@ Item {
             }
 
             Button {
-              text: root.tr("importBtn")
-              bordered: true
-              tooltipText: root.tr("importTooltip")
-              onClicked: root.openImportBookmarksModal()
-            }
-
-            Button {
               text: "✕"
               bordered: true
               tooltipText: root.tr("closeTooltip")
               onClicked: root.dismiss()
+            }
+
+            Button {
+              id: moreActionsBtn
+              text: "▾"
+              bordered: true
+              tooltipText: root.tr("moreActionsTooltip")
+              onClicked: root.toggleMoreActions(moreActionsBtn)
             }
           }
         }
@@ -4483,7 +4497,7 @@ Item {
       MouseArea {
         id: popupDismissBackdrop
         anchors.fill: parent
-        visible: root.contextMenuOpen || root.spacesDropdownOpen
+        visible: root.contextMenuOpen || root.spacesDropdownOpen || root.moreActionsOpen
         acceptedButtons: Qt.AllButtons
         z: 48
         onPressed: function(mouse) {
@@ -5098,6 +5112,119 @@ Item {
               hoverEnabled: true
               cursorShape: Qt.PointingHandCursor
               onClicked: root.openSpaceModal(null)
+            }
+          }
+        }
+      }
+
+      // ============================================================
+      // 6C. FLOATING "MORE ACTIONS" MENU (top bar)
+      // ============================================================
+      Rectangle {
+        id: moreActionsPopup
+        visible: root.moreActionsOpen
+        x: root.moreActionsX
+        y: root.moreActionsY
+        width: Style.space(220)
+        height: moreActionsCol.implicitHeight + Style.space(16)
+        radius: Style.cornerRadius > 0 ? Math.max(6, Style.cornerRadius) : 6
+        color: Color.popups.background
+        border.width: 1.5
+        border.color: Color.popups.border
+        z: 55
+
+        MouseArea {
+          anchors.fill: parent
+          acceptedButtons: Qt.AllButtons
+        }
+
+        Column {
+          id: moreActionsCol
+          anchors.fill: parent
+          anchors.margins: Style.space(8)
+          spacing: Style.space(4)
+
+          Rectangle {
+            width: moreActionsCol.width
+            height: Style.space(32)
+            radius: 4
+            color: browserHostMenuMouse.containsMouse ? root.selectedBackground : "transparent"
+
+            Text {
+              anchors.left: parent.left
+              anchors.leftMargin: Style.space(8)
+              anchors.verticalCenter: parent.verticalCenter
+              text: root.browserHostRegistered ? root.tr("browserHostBtnOn") : root.tr("browserHostBtn")
+              color: browserHostMenuMouse.containsMouse ? root.selectedText : root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+            }
+
+            MouseArea {
+              id: browserHostMenuMouse
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: {
+                root.moreActionsOpen = false
+                root.registerBrowserHost()
+              }
+            }
+          }
+
+          Rectangle {
+            width: moreActionsCol.width
+            height: Style.space(32)
+            radius: 4
+            color: langMenuMouse.containsMouse ? root.selectedBackground : "transparent"
+
+            Text {
+              anchors.left: parent.left
+              anchors.leftMargin: Style.space(8)
+              anchors.verticalCenter: parent.verticalCenter
+              text: "󰗊 " + root.activeLang.toUpperCase() + (root.languagePref === "auto" ? " (A)" : "")
+              color: langMenuMouse.containsMouse ? root.selectedText : root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+            }
+
+            MouseArea {
+              id: langMenuMouse
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: {
+                root.moreActionsOpen = false
+                root.cycleLanguage()
+              }
+            }
+          }
+
+          Rectangle {
+            width: moreActionsCol.width
+            height: Style.space(32)
+            radius: 4
+            color: importMenuMouse.containsMouse ? root.selectedBackground : "transparent"
+
+            Text {
+              anchors.left: parent.left
+              anchors.leftMargin: Style.space(8)
+              anchors.verticalCenter: parent.verticalCenter
+              text: root.tr("importBtn")
+              color: importMenuMouse.containsMouse ? root.selectedText : root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+            }
+
+            MouseArea {
+              id: importMenuMouse
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: {
+                root.moreActionsOpen = false
+                root.openImportBookmarksModal()
+              }
             }
           }
         }
