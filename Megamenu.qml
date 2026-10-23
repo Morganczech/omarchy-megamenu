@@ -2046,10 +2046,23 @@ Item {
     if (root.activeModal !== "") return
 
     // Quick Orbit [1-6] with Alt+1..6 or plain 1..6 when search input is empty.
-    // A focused note editor keeps the digit. Orbit selection of a note is later.
+    // A focused note editor keeps the digit.
     if (event.key >= Qt.Key_1 && event.key <= Qt.Key_6) {
       if (root.noteEditorFocused) return
       var slotIdx = event.key - Qt.Key_1
+      if (root.notesSpaceActive) {
+        if (String(root.searchQuery || "").trim().length === 0) {
+          var noteCard = null
+          var cards = root.data.notes.cards
+          for (var n = 0; n < cards.length; n++) {
+            if (cards[n].pinnedSlot === slotIdx + 1) noteCard = cards[n]
+          }
+          if (noteCard) root.selectNote(noteCard.path)
+          event.accepted = true
+          return
+        }
+        return
+      }
       if (alt || (!searchInput.activeFocus) || (root.searchQuery.length === 0 && !ctrl)) {
         var orbitItem = root.pinnedOrbit[slotIdx]
         if (orbitItem) {
