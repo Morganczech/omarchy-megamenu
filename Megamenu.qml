@@ -2051,7 +2051,7 @@ Item {
       if (root.noteEditorFocused) return
       var slotIdx = event.key - Qt.Key_1
       if (root.notesSpaceActive) {
-        if (String(root.searchQuery || "").trim().length === 0) {
+        if (root.searchQuery.length === 0) {
           var noteCard = null
           var cards = root.data.notes.cards
           for (var n = 0; n < cards.length; n++) {
