@@ -1192,22 +1192,21 @@ Item {
     root.runNotes({ cmd: "scan", roots: root.noteWriteRoots() }, function (res) {
       if (!res || !res.ok) {
         root.noteError = root.tr("notesScanFailed")
+        root.showStatus(root.tr("notesScanFailed"))
         return
       }
       var previousNotes = root.data.notes
       var openDraft = root.noteDraft || root.emptyNoteDraft()
       var openPath = String(openDraft.path || "")
       var merged = Storage.mergeNoteScan(previousNotes, res.files || [], "cat-notes-inbox", res.truncated === true)
-      if (openPath && openDraft.dirty) {
-        var mergedCards = merged.cards || []
-        var openKept = false
-        for (var k = 0; k < mergedCards.length; k++) {
-          if (mergedCards[k] && String(mergedCards[k].path) === openPath) {
-            openKept = true
-            break
-          }
+      if (openPath && !Storage.notePathAllowed(openPath, root.noteWriteRoots())) {
+        var allowedCards = merged.cards || []
+        var withoutOpen = []
+        for (var d = 0; d < allowedCards.length; d++) {
+          if (allowedCards[d] && String(allowedCards[d].path) !== openPath) withoutOpen.push(allowedCards[d])
         }
-        if (!openKept && !Storage.notePathAllowed(openPath, root.noteWriteRoots())) {
+        merged.cards = withoutOpen
+        if (openDraft.dirty) {
           root.noteDraftToken = root.noteDraftToken + 1
           root.noteReadOnly = false
           root.noteDraft = {
@@ -1218,8 +1217,21 @@ Item {
             dirty: true
           }
           root.showStatus(root.tr("notesFileGone"))
-          openPath = ""
-        } else if (!openKept) {
+        } else {
+          root.noteDraftToken = root.noteDraftToken + 1
+          root.clearNoteDraft()
+        }
+        openPath = ""
+      } else if (openPath && openDraft.dirty) {
+        var mergedCards = merged.cards || []
+        var openKept = false
+        for (var k = 0; k < mergedCards.length; k++) {
+          if (mergedCards[k] && String(mergedCards[k].path) === openPath) {
+            openKept = true
+            break
+          }
+        }
+        if (!openKept) {
           var oldCards = (previousNotes && previousNotes.cards) ? previousNotes.cards : []
           for (var c = 0; c < oldCards.length; c++) {
             if (oldCards[c] && String(oldCards[c].path) === openPath) {
@@ -1233,6 +1245,7 @@ Item {
       root.data.notes = merged
       root.noteFiles = res.files || []
       root.noteError = (res.errors && res.errors.length) ? root.tr("notesRootSkipped") : ""
+      if (res.errors && res.errors.length) root.showStatus(root.tr("notesRootSkipped"))
       root.commitData(root.data)
       if (openPath) root.reconcileOpenNote(openPath)
     })
@@ -3393,7 +3406,9 @@ Item {
           id: orbitSection
           width: parent.width
           spacing: Style.space(6)
-          visible: !root.isCommandMode && root.searchQuery.trim().length === 0
+          visible: !root.isCommandMode
+                   && !root.notesSpaceActive
+                   && root.searchQuery.trim().length === 0
 
           Item {
             width: parent.width
