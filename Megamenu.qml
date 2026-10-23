@@ -149,6 +149,9 @@ Item {
   property string currentGlobalShortcut: ""
   property bool browserHostRegistered: false
   property string formShortcutCombo: "SUPER + M"
+  // Opt-in note shortcut (separate block gruut.megamenu.note; never touches currentGlobalShortcut)
+  property string currentNoteShortcut: ""
+  property string formNoteShortcutCombo: "SUPER + N"
 
   // Theme-bound surface tokens from qs.Commons
   property color background: Color.menu.background
@@ -328,7 +331,8 @@ Item {
       }
       if (p && p.action) action = String(p.action)
     } catch (e) {}
-    if (action === "new-note") root.pendingNewNote = true
+    // Every open sets the flag, so a plain open clears a stale new-note request.
+    root.pendingNewNote = (action === "new-note")
     // dataFile.reload() hydrates asynchronously. scanNotes() runs at the end
     // of that hydrate, including when the action is new-note.
     root.scanNotesOnOpen = true
@@ -350,9 +354,12 @@ Item {
     else root.refreshLiveFeeds(false, "")
     root.refreshBrowserHostStatus()
     root.ensureSelectedValid()
-    Qt.callLater(function() {
-      if (searchInput) searchInput.forceActiveFocus()
-    })
+    // A pending new note keeps focus for the editor (or the folder field).
+    if (!root.pendingNewNote) {
+      Qt.callLater(function() {
+        if (searchInput) searchInput.forceActiveFocus()
+      })
+    }
   }
 
   function close() {
@@ -497,6 +504,11 @@ Item {
     if (root.opened || root.scanNotesOnOpen) {
       root.scanNotesOnOpen = false
       root.scanNotes()
+    }
+    if (root.pendingNewNote) {
+      root.pendingNewNote = false
+      // beginNoteDraft() only runs once the switch to the notes space is committed.
+      root.switchSpace("notes", function () { root.beginNoteDraft() })
     }
   }
 
@@ -1933,6 +1945,8 @@ Item {
   function openShortcutModal() {
     root.closeContextMenu()
     root.formShortcutCombo = root.currentGlobalShortcut || "SUPER + M"
+    root.formNoteShortcutCombo = root.currentNoteShortcut || "SUPER + N"
+    root.applyNoteShortcut("", "note-status")
     root.activeModal = "shortcut"
   }
 
@@ -1970,6 +1984,17 @@ Item {
       String(comboValue || "")
     ]
     shortcutManageProc.running = true
+  }
+
+  function applyNoteShortcut(comboValue, mode) {
+    noteShortcutProc.pendingMode = mode || "note-replace"
+    noteShortcutProc.command = [
+      "python3",
+      root.pluginDir + "/scripts/manage-shortcut.py",
+      noteShortcutProc.pendingMode,
+      String(comboValue || "")
+    ]
+    noteShortcutProc.running = true
   }
 
   // Helper script invocations
@@ -2492,6 +2517,38 @@ Item {
             }
           }
         } else if (res.error && shortcutManageProc.pendingMode !== "status") {
+          root.showStatus(root.tr("statusShortcutError") + res.error)
+        }
+      } catch (e) {}
+    }
+  }
+
+  Process {
+    id: noteShortcutProc
+    property string pendingMode: "note-status"
+    running: false
+    stdout: StdioCollector {
+      id: noteShortcutOut
+      waitForEnd: true
+    }
+    onExited: {
+      var raw = String(noteShortcutOut.text || "").trim()
+      if (!raw) return
+      try {
+        var res = JSON.parse(raw)
+        if (res.ok) {
+          root.currentNoteShortcut = String(res.shortcut || "")
+          if (noteShortcutProc.pendingMode !== "note-status") {
+            root.activeModal = ""
+            if (root.currentNoteShortcut) {
+              root.showStatus(root.tr("statusNoteShortcutSaved") + root.currentNoteShortcut)
+            } else {
+              root.showStatus(root.tr("statusShortcutRemoved"))
+            }
+          } else {
+            root.formNoteShortcutCombo = root.currentNoteShortcut || "SUPER + N"
+          }
+        } else if (res.error && noteShortcutProc.pendingMode !== "note-status") {
           root.showStatus(root.tr("statusShortcutError") + res.error)
         }
       } catch (e) {}
@@ -6137,6 +6194,56 @@ Item {
                 bordered: true
                 selected: true
                 onClicked: root.applyGlobalShortcut(root.formShortcutCombo, "replace")
+              }
+            }
+
+            Column {
+              width: parent.width
+              spacing: 4
+              Text {
+                text: root.tr("shortcutNoteLabel")
+                color: Color.muted
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+              TextField {
+                width: parent.width
+                placeholderText: "SUPER + N"
+                text: root.formNoteShortcutCombo
+                onTextChanged: root.formNoteShortcutCombo = text
+              }
+            }
+
+            Flow {
+              width: parent.width
+              spacing: Style.space(8)
+
+              Button {
+                text: "SUPER + N"
+                bordered: true
+                selected: root.formNoteShortcutCombo.trim().toUpperCase() === "SUPER + N"
+                onClicked: root.formNoteShortcutCombo = "SUPER + N"
+              }
+            }
+
+            Row {
+              width: parent.width
+              spacing: Style.space(8)
+
+              Button {
+                text: root.tr("shortcutNoteNoneBtn")
+                bordered: true
+                visible: root.currentNoteShortcut !== ""
+                onClicked: root.applyNoteShortcut("", "note-remove")
+              }
+
+              Item { width: Style.space(10); height: 1 }
+
+              Button {
+                text: root.tr("shortcutNoteSaveBtn")
+                bordered: true
+                selected: true
+                onClicked: root.applyNoteShortcut(root.formNoteShortcutCombo, "note-replace")
               }
             }
           }

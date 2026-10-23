@@ -11,6 +11,10 @@ import sys
 import tempfile
 
 PLUGIN_ID = "gruut.megamenu"
+NOTE_PLUGIN_ID = "gruut.megamenu.note"
+TOGGLE_COMMAND = f"omarchy-shell shell toggle {PLUGIN_ID}"
+NOTE_COMMAND = f"omarchy-shell shell summon {PLUGIN_ID} '{{\"action\":\"new-note\"}}'"
+NOTE_DEFAULT_COMBO = "SUPER + N"
 MODIFIERS = {"SUPER": 64, "CTRL": 4, "ALT": 8, "SHIFT": 1}
 
 
@@ -42,30 +46,32 @@ def run_cmd(args):
     return res.stdout.strip()
 
 
-def make_block(combo, replace=False):
+def make_block(combo, replace, plugin_id, command):
     return (
-        f"\n-- omaplug-shortcut-start: {PLUGIN_ID}\n"
+        f"\n-- omaplug-shortcut-start: {plugin_id}\n"
         + (f"hl.unbind({json.dumps(combo)})\n" if replace else "")
         + "o.bind("
         + ", ".join(
             json.dumps(s)
             for s in (
                 combo,
-                f"Omaplug: {PLUGIN_ID}",
-                f"omarchy-shell shell toggle {PLUGIN_ID}",
+                f"Omaplug: {plugin_id}",
+                command,
             )
         )
         + ")\n"
-        + f"-- omaplug-shortcut-end: {PLUGIN_ID}\n"
+        + f"-- omaplug-shortcut-end: {plugin_id}\n"
     )
 
 
-def extract_saved(raw):
+def extract_saved(raw, plugin_id):
+    # The id is always followed by a newline, so "gruut.megamenu" never matches
+    # the "gruut.megamenu.note" markers (and the reverse).
     pattern = re.compile(
         r"\n?-- omaplug-shortcut-start: "
-        + re.escape(PLUGIN_ID)
+        + re.escape(plugin_id)
         + r"\n.*?-- omaplug-shortcut-end: "
-        + re.escape(PLUGIN_ID)
+        + re.escape(plugin_id)
         + r"\n?",
         re.S,
     )
@@ -81,7 +87,7 @@ def extract_saved(raw):
     return (match.group(1) if match else ""), has_unbind, cleaned
 
 
-def check_conflict(bindings, combo, own_combo=""):
+def check_conflict(bindings, combo, own_combo="", plugin_id=PLUGIN_ID, command=TOGGLE_COMMAND):
     _, mask, key = normalize_combo(combo)
     own_ignored = False
     for b in bindings:
@@ -95,7 +101,7 @@ def check_conflict(bindings, combo, own_combo=""):
         desc = str(b.get("description") or "")
         arg = str(b.get("arg") or "")
         if not own_ignored and combo == own_combo and (
-            desc == f"Omaplug: {PLUGIN_ID}" or PLUGIN_ID in arg
+            desc == f"Omaplug: {plugin_id}" or command in arg
         ):
             own_ignored = True
             continue
@@ -130,11 +136,17 @@ def write_bindings(path, content, mode):
 
 def execute(action, value="SUPER + M"):
     bindings_path = Path.home() / ".config/hypr/bindings.lua"
+    plugin_id, command = PLUGIN_ID, TOGGLE_COMMAND
+    if action.startswith("note-"):
+        action = action[len("note-"):]
+        plugin_id, command = NOTE_PLUGIN_ID, NOTE_COMMAND
+        if action in ("set", "replace") and not str(value or "").strip():
+            value = NOTE_DEFAULT_COMBO
     if action == "status":
         if not bindings_path.exists():
             return {"ok": True, "shortcut": "", "replaced": False}
         raw, _ = read_bindings(bindings_path)
-        own_combo, own_replace, _ = extract_saved(raw)
+        own_combo, own_replace, _ = extract_saved(raw, plugin_id)
         return {"ok": True, "shortcut": own_combo, "replaced": own_replace}
 
     if action not in ("set", "replace", "remove"):
@@ -148,7 +160,7 @@ def execute(action, value="SUPER + M"):
             raise ValueError("Unsafe shortcut lock file.")
         fcntl.flock(lock_stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
         raw, mode = read_bindings(bindings_path)
-        own_combo, own_replace, base = extract_saved(raw)
+        own_combo, own_replace, base = extract_saved(raw, plugin_id)
 
         if action == "remove":
             if not own_combo:
@@ -168,7 +180,7 @@ def execute(action, value="SUPER + M"):
             binds = json.loads(run_cmd(["hyprctl", "-j", "binds"]))
         except Exception:
             binds = []
-        conflict_desc = check_conflict(binds, combo, own_combo)
+        conflict_desc = check_conflict(binds, combo, own_combo, plugin_id, command)
         need_replace = bool(conflict_desc) or (action == "replace") or (combo == own_combo and own_replace)
         if conflict_desc and action != "replace":
             return {
@@ -182,7 +194,7 @@ def execute(action, value="SUPER + M"):
         if run_cmd(["hyprctl", "configerrors"]):
             raise ValueError("Fix existing Hyprland configuration errors before saving shortcuts.")
 
-        updated = base + make_block(combo, need_replace)
+        updated = base + make_block(combo, need_replace, plugin_id, command)
         if updated == raw:
             return {"ok": True, "shortcut": combo, "replaced": need_replace, "unchanged": True}
 
@@ -203,10 +215,10 @@ def execute(action, value="SUPER + M"):
 if __name__ == "__main__":
     try:
         act = sys.argv[1] if len(sys.argv) > 1 else "status"
-        val = sys.argv[2] if len(sys.argv) > 2 else "SUPER + M"
+        val = sys.argv[2] if len(sys.argv) > 2 else ("" if act.startswith("note-") else "SUPER + M")
         res = execute(act, val)
         print(json.dumps(res))
-        if not res.get("ok", True) and act != "set":
+        if not res.get("ok", True) and act not in ("set", "note-set"):
             sys.exit(1)
     except Exception as exc:
         print(json.dumps({"ok": False, "error": str(exc)}))
