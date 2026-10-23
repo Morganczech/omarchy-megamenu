@@ -179,4 +179,17 @@ assert.ok(ensuredAgain.categories.some(function (c) {
   return c.id === "cat-notes-inbox" && c.name === "Nezařazené"
 }))
 
+const found = S.searchNotes(
+  { cards: [{ path: "/notes/a.md", badgeText: "Trip", categoryId: "cat-notes-inbox", colorRole: "", pinnedSlot: 0 }] },
+  [{ path: "/notes/a.md", title: "Nadpis" }],
+  "nad"
+)
+assert.strictEqual(found.length, 1)
+assert.strictEqual(found[0].title, "Nadpis")
+assert.strictEqual(S.searchNotes(
+  { cards: [] },
+  [{ path: "/notes/a.md", title: "Nadpis" }],
+  "body text that is not the title"
+).length, 0)
+
 console.log("storage-notes: all assertions ok")

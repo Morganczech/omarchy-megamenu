@@ -1506,6 +1506,37 @@ function notePathAllowed(path, roots) {
   return false
 }
 
+function searchNotes(notes, files, query) {
+  var q = String(query || "").trim().toLowerCase()
+  if (!q) return []
+  var cards = (notes && Array.isArray(notes.cards)) ? notes.cards : []
+  var rows = notesModelRows(cards, files)
+  var out = []
+  for (var i = 0; i < rows.length; i++) {
+    var row = rows[i]
+    var hay = [
+      String(row.title || ""),
+      notePathStem(row.path),
+      String(row.badgeText || "")
+    ]
+    var hit = false
+    for (var h = 0; h < hay.length; h++) {
+      if (hay[h].toLowerCase().indexOf(q) !== -1) {
+        hit = true
+        break
+      }
+    }
+    if (!hit) continue
+    out.push({
+      path: row.path,
+      title: row.title,
+      badgeText: row.badgeText,
+      categoryId: row.categoryId
+    })
+  }
+  return out
+}
+
 function emptyNotes() {
   return { writeRoot: "", roots: [], cards: [] }
 }
@@ -1698,6 +1729,7 @@ if (typeof module !== "undefined") {
     notePathAllowed: notePathAllowed,
     mergeNoteScan: mergeNoteScan,
     notesModelRows: notesModelRows,
+    searchNotes: searchNotes,
     noteReadSettlement: noteReadSettlement,
     noteWriteDraft: noteWriteDraft,
     ensureNotesModel: ensureNotesModel

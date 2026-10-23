@@ -173,6 +173,18 @@ Item {
   }
   readonly property bool notesSpaceActive: !!(root.activeSpace && String(root.activeSpace.type || "") === "notes")
   readonly property var notesModel: root.buildNotesModel(root.data, root.noteFiles)
+  readonly property var notesSpace: {
+    var spaces = (root.data && root.data.spaces) ? root.data.spaces : []
+    for (var i = 0; i < spaces.length; i++) {
+      if (spaces[i] && String(spaces[i].type || "") === "notes") return spaces[i]
+    }
+    return null
+  }
+  readonly property var notesSearchRows: root.buildNotesSearchRows(root.notesModel, root.data, root.noteFiles, root.searchQuery, root.isCommandMode)
+  readonly property var paneNotesModel: (!root.isCommandMode && String(root.searchQuery || "").trim().length > 0)
+    ? root.notesSearchRows
+    : root.notesModel
+  readonly property var noteSearchItems: root.notesSpaceActive ? [] : root.buildNoteSearchItems(root.notesSearchRows)
   readonly property var currentCategories: Storage.categoriesForSpace(root.data, root.activeSpaceId)
   readonly property var currentSpaceItems: Storage.itemsForSpace(root.data, root.activeSpaceId)
   readonly property var pinnedOrbit: Storage.pinnedOrbitForSpace(root.data, root.activeSpaceId)
@@ -567,6 +579,63 @@ Item {
     var notes = data && data.notes ? data.notes : null
     var cards = notes && notes.cards ? notes.cards : []
     return Storage.notesModelRows(cards, files || [])
+  }
+
+  // Full notesModel rows whose title, filename stem or badge match the search
+  // query. Empty/whitespace queries and command mode match nothing.
+  function buildNotesSearchRows(model, data, files, query, commandMode) {
+    if (commandMode) return []
+    var matches = Storage.searchNotes(data ? data.notes : null, files || [], query)
+    if (matches.length === 0) return []
+    var wanted = {}
+    for (var i = 0; i < matches.length; i++) wanted[matches[i].path] = true
+    var rows = model || []
+    var out = []
+    for (var r = 0; r < rows.length; r++) {
+      if (rows[r] && wanted[rows[r].path] === true) out.push(rows[r])
+    }
+    return out
+  }
+
+  function buildNoteSearchItems(rows) {
+    var space = root.notesSpace
+    if (!space || !rows || rows.length === 0) return []
+    var items = []
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i]
+      items.push({
+        id: "__note__" + row.path,
+        spaceId: String(space.id),
+        categoryId: String(row.categoryId || ""),
+        type: "note",
+        title: String(row.title || ""),
+        subtitle: "",
+        url: "",
+        iconType: "glyph",
+        iconValue: "󰎞",
+        badgeText: String(row.badgeText || ""),
+        colorRole: String(row.colorRole || ""),
+        favorite: false,
+        pinnedSlot: 0,
+        isNoteResult: true,
+        notePath: String(row.path)
+      })
+    }
+    return items
+  }
+
+  function openNoteResult(item) {
+    if (!item || !item.isNoteResult) return
+    var path = String(item.notePath || "")
+    var space = root.notesSpace
+    if (!path || !space) return
+    if (root.notesSpaceActive) {
+      root.selectNote(path)
+      return
+    }
+    // selectNote runs only once the space switch has committed (switchSpace
+    // may first have to save the note being left).
+    root.switchSpace(String(space.id), function () { root.selectNote(path) })
   }
 
   function rememberWrittenNote(path, mtime, body) {
@@ -1158,6 +1227,9 @@ Item {
     if ((cat && cat.type === "omarchy") || catId === "__omarchy_system__") {
       return root.searchSystemColumnItems || []
     }
+    if (cat && cat.type === "other-space" && cat.notesSearch === true) {
+      return root.noteSearchItems || []
+    }
     if (cat && cat.type === "other-space") {
       var sid = String(cat.spaceId || "")
       var allOther = root.filteredFlatItems || []
@@ -1181,8 +1253,12 @@ Item {
     if (root.activeFilter !== "all" && root.activeFilter !== "favorites") return []
     var groups = Storage.otherSpaceSearchGroups(root.data, root.activeSpaceId, root.filteredFlatItems)
     var out = []
+    var noteItems = root.noteSearchItems || []
+    var noteSpace = root.notesSpace
+    var hasNotesEntry = !root.notesSpaceActive && noteSpace !== null && noteItems.length > 0
     for (var i = 0; i < groups.length; i++) {
       var g = groups[i]
+      if (hasNotesEntry && g.spaceId === String(noteSpace.id)) continue
       out.push({
         id: "__other_space__" + g.spaceId,
         spaceId: g.spaceId,
@@ -1190,6 +1266,17 @@ Item {
         icon: g.icon || "󰀻",
         colorRole: "magenta",
         type: "other-space"
+      })
+    }
+    if (hasNotesEntry) {
+      out.push({
+        id: "__other_space__" + String(noteSpace.id),
+        spaceId: String(noteSpace.id),
+        name: String(noteSpace.name || noteSpace.id),
+        icon: noteSpace.icon || "󰎞",
+        colorRole: "magenta",
+        type: "other-space",
+        notesSearch: true
       })
     }
     return out
@@ -1365,6 +1452,10 @@ Item {
     for (var k = 0; k < sys.length; k++) {
       if (sys[k].id === itemId) return sys[k]
     }
+    var noteHits = root.noteSearchItems || []
+    for (var n = 0; n < noteHits.length; n++) {
+      if (noteHits[n].id === itemId) return noteHits[n]
+    }
     return null
   }
 
@@ -1421,7 +1512,9 @@ Item {
     liveFeedFetchProc.running = true
   }
 
-  function switchSpace(spaceId) {
+  // `committed` (optional) runs after activeSpaceId has been committed, and not
+  // at all when leaving the current note space is cancelled (failed save).
+  function switchSpace(spaceId, committed) {
     if (!spaceId) return
     function go() {
       var next = Storage.cloneData(root.data)
@@ -1430,6 +1523,7 @@ Item {
       root.contextMenuOpen = false
       root.spacesDropdownOpen = false
       root.commitData(next)
+      if (committed) committed()
     }
     if (spaceId === root.activeSpaceId) {
       go()
@@ -1485,6 +1579,10 @@ Item {
 
   function launchItemDefault(item) {
     if (!item) return
+    if (item.isNoteResult === true) {
+      root.openNoteResult(item)
+      return
+    }
     root.bumpLaunchStats(item)
     root.dismiss()
     if (item.type === "app") {
@@ -1521,7 +1619,7 @@ Item {
   }
 
   function openContextMenuFor(item, globalX, globalY) {
-    if (!item) return
+    if (!item || item.isNoteResult === true) return
     root.spacesDropdownOpen = false
     root.contextMenuItem = item
     root.contextMoveBrowseSpaceId = ""
@@ -1634,7 +1732,7 @@ Item {
   }
 
   function openEditItemModal(item) {
-    if (!item) return
+    if (!item || item.isNoteResult === true) return
     root.contextMenuOpen = false
     root.spacesDropdownOpen = false
     root.formEditingNote = false
@@ -3876,6 +3974,7 @@ Item {
                               return
                             }
                             if (mouse.button === Qt.RightButton) {
+                              if (modelData.isNoteResult === true) return
                               var pos = rowMouse.mapToItem(card, mouse.x, mouse.y)
                               root.openContextMenuFor(modelData, pos.x, pos.y)
                             } else {
@@ -3958,7 +4057,7 @@ Item {
                             height: Style.space(24)
                             radius: 4
                             color: favMouse.containsMouse ? Util.alpha(root.foreground, 0.12) : "transparent"
-                            visible: itemRowRect.isHovered || itemRowRect.isSelected || modelData.favorite
+                            visible: modelData.isNoteResult !== true && (itemRowRect.isHovered || itemRowRect.isSelected || modelData.favorite)
 
                             Text {
                               anchors.centerIn: parent
@@ -3988,6 +4087,7 @@ Item {
                             width: Style.space(24)
                             height: Style.space(24)
                             radius: 4
+                            visible: modelData.isNoteResult !== true
                             color: dotsMouse.containsMouse ? Util.alpha(root.foreground, 0.14) : Util.alpha(root.foreground, 0.05)
 
                             Text {
@@ -4023,7 +4123,7 @@ Item {
             id: notePane
             anchors.fill: parent
             visible: root.notesSpaceActive && !root.isCommandMode
-            notesModel: root.notesModel
+            notesModel: root.paneNotesModel
             categories: root.currentCategories
             filter: root.activeFilter
             draftText: root.noteDraft ? String(root.noteDraft.text || "") : ""
