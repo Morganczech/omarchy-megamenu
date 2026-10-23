@@ -16,22 +16,26 @@ Item {
   property string currentPath: ""
   property string foldersLabel: ""
   property string omawriteLabel: ""
-  property string allLabel: "All"
   property color foreground: "#dddddd"
   property string fontFamily: ""
   property var roleColorFor: null
   property Item searchField: null
+  property var relayKey: null
 
   signal noteChosen(string path)
+  signal pinRequested(string path)
   signal draftEdited(string text)
   signal saveRequested()
   signal foldersRequested()
   signal omawriteRequested()
   signal noteMenuRequested(string path, real x, real y)
-  signal filterRequested(string id)
 
   function focusEditor() {
     editor.forceActiveFocus()
+  }
+
+  function editorText() {
+    return editor.text
   }
 
   function accentFor(note) {
@@ -60,22 +64,6 @@ Item {
       if (filterId && filterId !== "all" && filterId !== "favorites" && String(note.categoryId || "") !== filterId) continue
       list.push(note)
     }
-    list.sort(function (a, b) {
-      var ap = (a.pinnedSlot >= 1 && a.pinnedSlot <= 6) ? 0 : 1
-      var bp = (b.pinnedSlot >= 1 && b.pinnedSlot <= 6) ? 0 : 1
-      if (ap !== bp) return ap - bp
-      var mt = (Number(b.mtime) || 0) - (Number(a.mtime) || 0)
-      if (mt !== 0) return mt
-      var at = String(a.title || "")
-      var bt = String(b.title || "")
-      if (at < bt) return -1
-      if (at > bt) return 1
-      var apath = String(a.path || "")
-      var bpath = String(b.path || "")
-      if (apath < bpath) return -1
-      if (apath > bpath) return 1
-      return 0
-    })
     return list
   }
 
@@ -122,100 +110,9 @@ Item {
         }
       }
 
-      Flow {
-        id: chipFlow
-        anchors.top: listHeader.bottom
-        anchors.topMargin: Style.space(8)
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.leftMargin: Style.space(12)
-        anchors.rightMargin: Style.space(12)
-        height: implicitHeight
-        spacing: Style.space(8)
-
-        Rectangle {
-          id: allChip
-          readonly property bool active: {
-            var f = String(pane.filter || "all")
-            return f === "" || f === "all" || f === "favorites"
-          }
-          readonly property color accent: pane.roleColorFor ? pane.roleColorFor("green") : pane.foreground
-          height: Style.space(26)
-          width: allChipText.implicitWidth + Style.space(18)
-          radius: height / 2
-          color: active ? Util.alpha(allChip.accent, 0.18) : Util.alpha(pane.foreground, 0.04)
-          border.width: 1
-          border.color: allChip.active ? allChip.accent : Util.alpha(pane.foreground, 0.14)
-
-          Text {
-            id: allChipText
-            anchors.centerIn: parent
-            text: pane.allLabel
-            color: allChip.active ? pane.foreground : Color.muted
-            font.family: pane.fontFamily
-            font.pixelSize: Style.font.caption
-            font.bold: allChip.active
-          }
-
-          MouseArea {
-            anchors.fill: parent
-            cursorShape: Qt.PointingHandCursor
-            onClicked: pane.filterRequested("all")
-          }
-        }
-
-        Repeater {
-          model: pane.categories
-
-          delegate: Rectangle {
-            id: catChip
-            required property var modelData
-            readonly property bool active: String(pane.filter || "") === String(modelData.id || "")
-            readonly property color chipColor: pane.accentFor({ colorRole: modelData.colorRole, categoryId: modelData.id })
-            height: Style.space(26)
-            width: catChipRow.implicitWidth + Style.space(18)
-            radius: height / 2
-            color: active ? Util.alpha(chipColor, 0.18) : Util.alpha(pane.foreground, 0.04)
-            border.width: 1
-            border.color: active ? chipColor : Util.alpha(pane.foreground, 0.14)
-
-            Row {
-              id: catChipRow
-              anchors.centerIn: parent
-              spacing: Style.space(6)
-
-              Rectangle {
-                width: Style.space(6)
-                height: Style.space(6)
-                radius: width / 2
-                color: catChip.chipColor
-                anchors.verticalCenter: parent.verticalCenter
-              }
-
-              Text {
-                width: Math.min(implicitWidth, Style.space(140))
-                elide: Text.ElideRight
-                textFormat: Text.PlainText
-                text: modelData.name || ""
-                color: catChip.active ? pane.foreground : Color.muted
-                font.family: pane.fontFamily
-                font.pixelSize: Style.font.caption
-                font.bold: catChip.active
-              }
-            }
-
-            MouseArea {
-              anchors.fill: parent
-              cursorShape: Qt.PointingHandCursor
-              onClicked: pane.filterRequested(catChip.active ? "all" : String(modelData.id || ""))
-            }
-          }
-        }
-      }
-
       ListView {
         id: noteList
-        anchors.top: chipFlow.bottom
+        anchors.top: listHeader.bottom
         anchors.topMargin: Style.space(8)
         anchors.left: parent.left
         anchors.right: parent.right
@@ -233,6 +130,7 @@ Item {
           required property var modelData
           readonly property color rowAccent: pane.accentFor(modelData)
           readonly property bool selected: String(modelData.path || "") === String(pane.currentPath || "")
+          readonly property bool pinned: (Number(modelData.pinOrder) || 0) > 0
           width: noteList.width
           height: Style.space(46)
           radius: 5
@@ -259,7 +157,7 @@ Item {
           Row {
             anchors.fill: parent
             anchors.leftMargin: Style.space(16)
-            anchors.rightMargin: Style.space(10)
+            anchors.rightMargin: pinButton.width + Style.space(8)
             spacing: Style.space(8)
 
             Text {
@@ -309,6 +207,29 @@ Item {
                 return
               }
               pane.noteChosen(String(modelData.path || ""))
+            }
+          }
+
+          MouseArea {
+            id: pinButton
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.rightMargin: Style.space(8)
+            width: Style.space(22)
+            height: Style.space(22)
+            z: 2
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: pane.pinRequested(String(modelData.path || ""))
+
+            Text {
+              anchors.centerIn: parent
+              text: "󰐃"
+              color: noteRow.pinned
+                ? noteRow.rowAccent
+                : (pinButton.containsMouse ? pane.foreground : Color.muted)
+              font.family: pane.fontFamily
+              font.pixelSize: Style.font.body
             }
           }
         }
@@ -381,9 +302,30 @@ Item {
               if (pane.searchField) pane.searchField.forceActiveFocus()
             })
           }
+          // TextArea swallows Ctrl+S unless the shortcut override is accepted first.
+          Keys.onShortcutOverride: function (event) {
+            var ctrl = (event.modifiers & Qt.ControlModifier) !== 0
+            var meta = (event.modifiers & Qt.MetaModifier) !== 0
+            var alt = (event.modifiers & Qt.AltModifier) !== 0
+            if (ctrl && event.key === Qt.Key_S) {
+              event.accepted = true
+              return
+            }
+            if (!alt && event.key === Qt.Key_N && ((ctrl && !meta) || (meta && !ctrl))) {
+              event.accepted = true
+            }
+          }
           Keys.onPressed: function (event) {
-            if ((event.modifiers & Qt.ControlModifier) && event.key === Qt.Key_S) {
+            var ctrl = (event.modifiers & Qt.ControlModifier) !== 0
+            var meta = (event.modifiers & Qt.MetaModifier) !== 0
+            var alt = (event.modifiers & Qt.AltModifier) !== 0
+            if (ctrl && event.key === Qt.Key_S) {
               pane.saveRequested()
+              event.accepted = true
+              return
+            }
+            if (!alt && event.key === Qt.Key_N && ((ctrl && !meta) || (meta && !ctrl))) {
+              if (pane.relayKey) pane.relayKey(event)
               event.accepted = true
             }
           }

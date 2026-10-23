@@ -2,6 +2,8 @@
 
 A theme-aware Spotlight-style megamenu and bar widget for [Omarchy](https://omarchy.org/) featuring workspaces (**Spaces**), a 6-slot **Quick Access Orbit**, color-coded categories, live **RSS/Atom & GitHub columns**, web bookmarks with automatic favicons, built-in **Omarchy system actions & desktop app search**, saved **shell commands**, per-link browser selection, one-click browser bookmark importing, and a [Firefox / Zen add-on](https://addons.mozilla.org/firefox/addon/omarchy-megamenu/) to save the current page.
 
+Guide: [megamenu.rovix.eu](https://megamenu.rovix.eu)
+
 ![Omarchy Megamenu preview](preview.png)
 
 ## Features
@@ -27,7 +29,7 @@ A theme-aware Spotlight-style megamenu and bar widget for [Omarchy](https://omar
   - **Terminal** (default) opens the default Omarchy terminal via `xdg-terminal-exec`, runs the command with `bash -lc`, and waits for a key after it finishes. **Background** runs the same script with no window.
   - Find a saved command by its title or command text, including from `>`.
 - **Notes (Markdown on disk):**
-  - A **Note** space with a note list on the left and a plain-Markdown editor on the right. Pick one folder where new notes are written, and attach more folders whose existing `.md` files are listed. Notes are ordinary files, not copies inside `data.json`. See [Notes](#notes).
+  - A **Note** space with a note list on the left and a plain-Markdown editor on the right. Pick one folder where new notes are written, and attach more folders whose existing `.md` files are listed. A pin on the card keeps that note at the top. Notes are ordinary files, not copies inside `data.json`. See [Notes](#notes).
 - **Reorder & Move Between Spaces:**
   - Hover ▲ / ▼ on a static bookmark to reorder it within its category (hidden while searching or filtering Favorites).
   - Move an item to another space and category from the edit modal or the context menu (**Move to…** → Space → category). Orbit pins clear when the space changes.
@@ -44,7 +46,7 @@ A theme-aware Spotlight-style megamenu and bar widget for [Omarchy](https://omar
   - Strictly opt-in: no user configuration files are modified without explicit user action.
   - The same dialog has a separate, optional row for a **new note** shortcut (suggested `SUPER + N`). It is off by default and is only written after you turn it on there.
 - **Multilingual UI (English & Czech):**
-  - Supports automatic locale detection (`Auto`), **English (`EN`)**, and **Czech (`CS`)**, switchable live from the top bar or via bar widget settings.
+  - Supports automatic locale detection (`Auto`), **English (`EN`)**, and **Czech (`CS`)**, switchable from the **▾** menu or via bar widget settings.
 
 ## Install
 
@@ -89,7 +91,7 @@ omarchy-shell shell toggle gruut.megamenu
 | --- | --- |
 | **Type text** | Filter bookmarks and commands across all Spaces (plus Omarchy actions / apps) |
 | **`>` + query** | Search and launch Omarchy actions, installed applications, and saved commands |
-| **`1` – `6`** | Launch pinned Quick Access Orbit slot `1–6` (when search is empty) |
+| **`1` – `6`** | Launch pinned Quick Access Orbit slot `1–6` (when search is empty; the Note space does not use these keys) |
 | **`Tab` / `Shift+Tab`** | Switch to next / previous Space |
 | **`↑` / `↓` / `←` / `→`** | Navigate items (or system apps in `>` mode) |
 | **`Enter`** | Launch selected bookmark, command, or application |
@@ -113,7 +115,7 @@ Two pieces are required: the **browser extension** (saves the tab) and the **loc
 
 #### 2. Register the local helper
 
-Open Megamenu and click **Page save** / **Ukládání stránek** in the top bar (hover explains that the add-on is still required). Or from a terminal:
+Open Megamenu and click **Page save** / **Ukládání stránek** in the **▾** menu (hover explains that the add-on is still required). Or from a terminal:
 
 ```bash
 python3 ~/.config/omarchy/plugins/gruut.megamenu/scripts/install-browser-host.py --firefox-only
@@ -179,9 +181,10 @@ The **Note** space keeps your own notes as plain Markdown files.
 - **Write folder:** pick the one folder where new notes are created. Open the **Folders** control in the note list header and set it there.
 - **More folders:** attach extra folders in the same control. Their existing `.md` files (including nested ones, but not hidden directories) are listed; new files are never created there.
 - **Edit plain Markdown:** the right pane is a plain text editor. A line such as `# Nadpis` is kept in the file, and the file is named after the title (`Nadpis.md`). YAML frontmatter at the top of a file is preserved and not shown in the editor. `Ctrl+S` saves, and leaving a note that has text saves it too. An empty draft creates no file.
-- **Orbit selects a note:** pin a note to a slot (right-click → Orbit slot). In the Note space, with an empty search and the editor not focused, `1`–`6` select that note and the menu stays open.
+- **Pin a note:** the pin icon on a note card keeps that note above the others. The most recently pinned note is first. Click the pin again to unpin. The icon is colored while the note is pinned. Keys `1`–`6` do not open notes.
+- **Categories:** note categories use the same filter row under the search field as other spaces. Badges stay on the cards.
 - **Find a note:** typing in any space also matches note titles, file names, and badges. Choosing a match opens it in the Note space.
-- **Omawrite opens the file:** right-click a note and choose **Open in Omawrite** to edit it there. When you come back, a note without unsaved edits reloads; with unsaved text, your text is kept and a notice says the file changed.
+- **Omawrite opens the file:** **Open in Omawrite** in the editor, or the same action in the note's context menu, edits that file outside the menu. When you come back, a note without unsaved edits reloads; with unsaved text, your text is kept and a notice says the file changed.
 - **Delete moves the file to trash:** after a confirmation the file goes to the system trash, so it can be restored. Cancel leaves it alone.
 - **`SUPER + N` is opt-in:** open the shortcut dialog from the top bar and turn on the note shortcut row. Nothing is written to `bindings.lua` until you do. It opens a new note even when Megamenu is already open.
 - **Top-bar `▾` menu:** the top row shows shortcut, add item, add category, close, and `▾`. **Page save**, language, and import are inside the `▾` menu, in every space.

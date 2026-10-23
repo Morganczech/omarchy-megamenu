@@ -53,8 +53,8 @@ const visibleRows = S.notesModelRows(hiddenCards, [
   { path: "/notes/keep.md", title: "Keep", mtime: 9, size: 10, tooLarge: false }
 ])
 assert.strictEqual(visibleRows.length, 2)
-const hiddenRow = visibleRows[1]
-assert.strictEqual(hiddenRow.path, "/notes/folder/later-note.md")
+const hiddenRow = visibleRows.find(function (row) { return row.path === "/notes/folder/later-note.md" })
+assert.ok(hiddenRow)
 assert.strictEqual(hiddenRow.title, S.noteListTitle("", "later-note"))
 assert.strictEqual(hiddenRow.title, "later-note")
 assert.strictEqual(hiddenRow.badgeText, "H")
@@ -63,9 +63,10 @@ assert.strictEqual(hiddenRow.categoryId, "cat-notes-inbox")
 assert.strictEqual(hiddenRow.pinnedSlot, 1)
 assert.strictEqual(hiddenRow.mtime, 0)
 assert.strictEqual(hiddenRow.tooLarge, false)
-assert.strictEqual(visibleRows[0].title, "Keep")
-assert.strictEqual(visibleRows[0].mtime, 9)
-assert.strictEqual(visibleRows[0].tooLarge, false)
+const keepRow = visibleRows.find(function (row) { return row.path === "/notes/keep.md" })
+assert.strictEqual(keepRow.title, "Keep")
+assert.strictEqual(keepRow.mtime, 9)
+assert.strictEqual(keepRow.tooLarge, false)
 assert.strictEqual(hiddenCards.length, 2)
 
 const cleanA = { path: "/notes/a.md", text: "A", frontmatter: "", mtime: 1, dirty: false }
@@ -236,5 +237,89 @@ const scanMissingBadge = S.searchNotes(
 )
 assert.strictEqual(scanMissingBadge.length, 1)
 assert.strictEqual(scanMissingBadge[0].badgeText, "H")
+
+const diskDuringScan = {
+  version: 1,
+  activeSpaceId: "personal",
+  language: "cs",
+  spaces: [{ id: "personal", name: "Personal", icon: "X" }, { id: "notes", name: "Note", icon: "Y", type: "notes" }],
+  categories: [],
+  items: [{ id: "saved-during-scan", spaceId: "personal", type: "url", title: "Saved during scan", url: "https://example.com/saved" }],
+  notes: {
+    writeRoot: "/old",
+    roots: [],
+    cards: [{ path: "/old/stale.md", categoryId: "cat-notes-inbox", colorRole: "", badgeText: "", pinnedSlot: 0 }]
+  }
+}
+const scannedNotes = {
+  writeRoot: "/notes",
+  roots: ["/extra"],
+  cards: [
+    { path: "/notes/a.md", categoryId: "cat-notes-inbox", colorRole: "blue", badgeText: "A", pinnedSlot: 1 },
+    { path: "", categoryId: "cat-notes-inbox", colorRole: "", badgeText: "", pinnedSlot: 9 }
+  ]
+}
+const applied = S.applyScannedNotes(diskDuringScan, scannedNotes)
+assert.strictEqual(applied.activeSpaceId, "personal")
+assert.strictEqual(applied.language, "cs")
+assert.strictEqual(applied.items.length, 1)
+assert.strictEqual(applied.items[0].id, "saved-during-scan")
+assert.strictEqual(applied.items[0].title, "Saved during scan")
+assert.strictEqual(applied.notes.writeRoot, "/notes")
+assert.deepStrictEqual(applied.notes.roots, ["/extra"])
+assert.strictEqual(applied.notes.cards.length, 1)
+assert.strictEqual(applied.notes.cards[0].path, "/notes/a.md")
+assert.strictEqual(applied.notes.cards[0].badgeText, "A")
+assert.strictEqual(applied.notes.cards[0].pinnedSlot, 1)
+assert.ok(!applied.notes.cards.some(function (c) { return c.path === "/old/stale.md" }))
+
+const legacyPins = S.parse(JSON.stringify({
+  version: 1,
+  activeSpaceId: "notes",
+  language: "en",
+  spaces: [{ id: "notes", name: "Note", icon: "Y", type: "notes" }],
+  categories: [],
+  items: [],
+  notes: {
+    writeRoot: "/notes",
+    roots: [],
+    cards: [
+      { path: "/notes/slot-one.md", categoryId: "", colorRole: "", badgeText: "", pinnedSlot: 1 },
+      { path: "/notes/slot-six.md", categoryId: "", colorRole: "", badgeText: "", pinnedSlot: 6 },
+      { path: "/notes/explicit.md", categoryId: "", colorRole: "", badgeText: "", pinnedSlot: 1, pinOrder: 9 }
+    ]
+  }
+}))
+assert.strictEqual(legacyPins.notes.cards[0].pinOrder, 6)
+assert.strictEqual(legacyPins.notes.cards[1].pinOrder, 1)
+assert.strictEqual(legacyPins.notes.cards[2].pinOrder, 9)
+
+const unpinned = S.toggleNotePin(legacyPins.notes, "/notes/slot-six.md")
+const unpinnedSix = unpinned.cards.find(function (c) { return c.path === "/notes/slot-six.md" })
+assert.strictEqual(unpinnedSix.pinOrder, 0)
+assert.strictEqual(unpinnedSix.pinnedSlot, 0)
+const repinned = S.toggleNotePin(unpinned, "/notes/slot-six.md")
+const six = repinned.cards.find(function (c) { return c.path === "/notes/slot-six.md" })
+const one = repinned.cards.find(function (c) { return c.path === "/notes/slot-one.md" })
+assert.ok(six.pinOrder > one.pinOrder)
+assert.strictEqual(six.pinnedSlot, 0)
+
+const rankedRows = S.notesModelRows(repinned.cards, [
+  { path: "/notes/slot-one.md", title: "One", mtime: 100, size: 1, tooLarge: false },
+  { path: "/notes/slot-six.md", title: "Six", mtime: 1, size: 1, tooLarge: false },
+  { path: "/notes/explicit.md", title: "Explicit", mtime: 5, size: 1, tooLarge: false }
+])
+assert.deepStrictEqual(rankedRows.map(function (row) { return row.path }), [
+  "/notes/slot-six.md",
+  "/notes/explicit.md",
+  "/notes/slot-one.md"
+])
+
+const keptPin = S.mergeNoteScan({
+  writeRoot: "/notes",
+  roots: [],
+  cards: [{ path: "/notes/a.md", categoryId: "cat-notes-inbox", colorRole: "", badgeText: "", pinnedSlot: 0, pinOrder: 4 }]
+}, [{ path: "/notes/a.md", title: "A", mtime: 1, size: 1, tooLarge: false }], "cat-notes-inbox", false)
+assert.strictEqual(keptPin.cards[0].pinOrder, 4)
 
 console.log("storage-notes: all assertions ok")

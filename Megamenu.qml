@@ -28,6 +28,9 @@ Item {
   property var noteFiles: []
   property string noteError: ""
   property bool pendingNewNote: false
+  property bool noteScanReadArmed: false
+  property var pendingScannedNotes: null
+  property string pendingScanOpenPath: ""
   property var notesQueue: []
   property bool scanNotesOnOpen: false
   property var noteDraft: ({ path: "", text: "", frontmatter: "", mtime: 0, dirty: false })
@@ -367,6 +370,10 @@ Item {
   }
 
   function close() {
+    // The shell hides the menu by calling close(), not dismiss(). Capture the
+    // editor first so Super+M still writes a note the user just typed.
+    root.captureNoteEditor()
+    if (root.notesSpaceActive && root.noteDraftNeedsSave()) root.saveCurrentNote(null)
     root.contextMenuOpen = false
     root.spacesDropdownOpen = false
     root.moreActionsOpen = false
@@ -694,7 +701,15 @@ Item {
     }
   }
 
+  // Pull the live editor into the draft. onTextChanged can miss a keystroke
+  // that is still only in the TextArea when the menu closes.
+  function captureNoteEditor() {
+    if (!root.notesSpaceActive || !notePane || notePane.applyingDraft) return
+    root.applyNoteDraftText(notePane.editorText())
+  }
+
   function saveCurrentNote(done) {
+    root.captureNoteEditor()
     var draft = root.noteDraft || root.emptyNoteDraft()
     var text = String(draft.text || "")
     if (!text.trim()) {
@@ -917,8 +932,16 @@ Item {
   function selectNote(path) {
     path = String(path || "")
     if (!path) return
+    root.captureNoteEditor()
     var draft = root.noteDraft || root.emptyNoteDraft()
     if (String(draft.path || "") === path) {
+      if (root.noteDraftNeedsSave()) {
+        root.saveCurrentNote(function (ok) {
+          if (!ok) return
+          root.readNoteIntoEditor(path)
+        })
+        return
+      }
       root.readNoteIntoEditor(path)
       return
     }
@@ -974,6 +997,14 @@ Item {
     root.activeModal = ""
     root.commitData(next)
     root.scanNotes()
+  }
+
+  function toggleNotePin(path) {
+    path = String(path || "")
+    if (!path || !root.data) return
+    var next = Storage.cloneData(root.data)
+    next.notes = Storage.toggleNotePin(next.notes, path)
+    root.commitData(next)
   }
 
   function openNoteMetaModal(note) {
@@ -1147,6 +1178,7 @@ Item {
   }
 
   function beginNoteDraft() {
+    root.captureNoteEditor()
     var notes = root.data && root.data.notes ? root.data.notes : {}
     if (!String(notes.writeRoot || "")) {
       root.openNoteFoldersModal()
@@ -1174,6 +1206,7 @@ Item {
       if (then) then()
       return
     }
+    root.captureNoteEditor()
     if (root.noteDraftNeedsSave()) {
       root.saveCurrentNote(function (ok) {
         if (ok && then) then()
@@ -1242,13 +1275,43 @@ Item {
           }
         }
       }
-      root.data.notes = merged
       root.noteFiles = res.files || []
       root.noteError = (res.errors && res.errors.length) ? root.tr("notesRootSkipped") : ""
       if (res.errors && res.errors.length) root.showStatus(root.tr("notesRootSkipped"))
-      root.commitData(root.data)
-      if (openPath) root.reconcileOpenNote(openPath)
+      // Re-read data.json and replace only notes, so a bookmark saved while
+      // the scan ran is not overwritten by the menu's older copy.
+      root.pendingScannedNotes = merged
+      root.pendingScanOpenPath = openPath
+      if (!root.noteScanReadArmed) {
+        root.noteScanReadArmed = true
+        if (noteScanFile.path) noteScanFile.reload()
+        else root.finishScannedNotes("")
+      }
     })
+  }
+
+  function finishScannedNotes(rawText) {
+    if (!root.noteScanReadArmed) return
+    var scanned = root.pendingScannedNotes
+    var openPath = root.pendingScanOpenPath || ""
+    root.noteScanReadArmed = false
+    root.pendingScannedNotes = null
+    root.pendingScanOpenPath = ""
+    if (!scanned) return
+    var base = root.data
+    var freshText = rawText && String(rawText).trim()
+    if (freshText) {
+      try {
+        var parsed = JSON.parse(freshText)
+        if (parsed && Array.isArray(parsed.spaces) && parsed.spaces.length > 0) {
+          base = Storage.parse(freshText)
+        }
+      } catch (e) {}
+    }
+    var next = Storage.applyScannedNotes(base, scanned)
+    next = Storage.ensureNotesModel(next, root.tr("notesInboxName"))
+    root.commitData(next)
+    if (openPath) root.reconcileOpenNote(openPath)
   }
 
   function itemsForCategory(catOrId) {
@@ -2114,21 +2177,8 @@ Item {
     // Quick Orbit [1-6] with Alt+1..6 or plain 1..6 when search input is empty.
     // A focused note editor keeps the digit.
     if (event.key >= Qt.Key_1 && event.key <= Qt.Key_6) {
-      if (root.noteEditorFocused) return
+      if (root.noteEditorFocused || root.notesSpaceActive) return
       var slotIdx = event.key - Qt.Key_1
-      if (root.notesSpaceActive) {
-        if (root.searchQuery.length === 0) {
-          var noteCard = null
-          var cards = root.data.notes.cards
-          for (var n = 0; n < cards.length; n++) {
-            if (cards[n].pinnedSlot === slotIdx + 1) noteCard = cards[n]
-          }
-          if (noteCard) root.selectNote(noteCard.path)
-          event.accepted = true
-          return
-        }
-        return
-      }
       if (alt || (!searchInput.activeFocus) || (root.searchQuery.length === 0 && !ctrl)) {
         var orbitItem = root.pinnedOrbit[slotIdx]
         if (orbitItem) {
@@ -2149,6 +2199,17 @@ Item {
     if (ctrl && event.key === Qt.Key_N) {
       if (root.notesSpaceActive) root.beginNoteDraft()
       else root.openAddItemModal("", 0)
+      event.accepted = true
+      return
+    }
+
+    // Super+N reaches the menu only when Hyprland has not bound it. The
+    // global shortcut stays opt-in and is written from the shortcut dialog.
+    var meta = (event.modifiers & Qt.MetaModifier) !== 0
+    if (meta && !ctrl && !alt && event.key === Qt.Key_N) {
+      var noteSpace = root.notesSpace
+      if (root.notesSpaceActive) root.beginNoteDraft()
+      else if (noteSpace) root.switchSpace(String(noteSpace.id), function () { root.beginNoteDraft() })
       event.accepted = true
       return
     }
@@ -2328,6 +2389,16 @@ Item {
     printErrors: false
     onLoaded: root.hydrateData(dataFile.text())
     onLoadFailed: root.hydrateData("")
+  }
+
+  FileView {
+    id: noteScanFile
+    path: root.dirReady ? root.dataDir + "/data.json" : ""
+    watchChanges: false
+    atomicWrites: true
+    printErrors: false
+    onLoaded: root.finishScannedNotes(noteScanFile.text())
+    onLoadFailed: root.finishScannedNotes("")
   }
 
   FileView {
@@ -2922,11 +2993,11 @@ Item {
                   }
 
                   Text {
-                    text: root.spacesDropdownOpen ? "▴" : "▾"
-                    color: root.spacesDropdownOpen ? root.roleColor("cyan") : Color.muted
+                    text: "󰅀"
+                    rotation: root.spacesDropdownOpen ? 180 : 0
+                    color: root.spacesDropdownOpen ? root.roleColor("cyan") : root.foreground
                     font.family: root.fontFamily
-                    font.pixelSize: Style.font.bodySmall
-                    font.bold: true
+                    font.pixelSize: Style.font.icon
                     anchors.verticalCenter: parent.verticalCenter
                   }
                 }
@@ -3007,7 +3078,9 @@ Item {
 
             Button {
               id: moreActionsBtn
-              text: "▾"
+              iconText: "󰅀"
+              iconSize: Style.font.body
+              iconRotation: root.moreActionsOpen ? 180 : 0
               bordered: true
               tooltipText: root.tr("moreActionsTooltip")
               onClicked: root.toggleMoreActions(moreActionsBtn)
@@ -3143,8 +3216,7 @@ Item {
           Flickable {
             id: filterPillsScroll
             width: parent.width
-            visible: !root.notesSpaceActive
-            height: root.notesSpaceActive ? 0 : Math.min(filterPillsFlow.implicitHeight, Style.space(60))
+            height: Math.min(filterPillsFlow.implicitHeight, Style.space(60))
             contentWidth: width
             contentHeight: filterPillsFlow.implicitHeight
             clip: true
@@ -3195,7 +3267,7 @@ Item {
                   }
 
                   Text {
-                    text: root.tr("filterAll") + " (" + root.currentSpaceItems.length + ")"
+                    text: root.tr("filterAll") + " (" + (root.notesSpaceActive ? (root.notesModel ? root.notesModel.length : 0) : root.currentSpaceItems.length) + ")"
                     color: allPillRect.active ? root.foreground : Color.muted
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption
@@ -3213,6 +3285,7 @@ Item {
               // Favorites Pill
               Rectangle {
                 id: favPillRect
+                visible: !root.notesSpaceActive
                 readonly property bool active: root.activeFilter === "favorites"
                 readonly property int favCount: {
                   var c = 0
@@ -4230,17 +4303,18 @@ Item {
             readOnly: root.noteReadOnly
             readOnlyMessage: root.noteReadOnly ? root.tr("notesTooLarge") : ""
             foldersLabel: root.tr("notesFoldersBtn")
-            allLabel: root.tr("filterAll")
             foreground: root.foreground
             fontFamily: root.fontFamily
             searchField: searchInput
             roleColorFor: function (role) { return root.roleColor(role) }
             omawriteLabel: root.tr("notesOpenOmawrite")
             onNoteChosen: function (path) { root.selectNote(path) }
+            onPinRequested: function (path) { root.toggleNotePin(path) }
             onDraftEdited: function (text) { root.applyNoteDraftText(text) }
             onSaveRequested: function () { root.saveCurrentNote() }
             onFoldersRequested: root.openNoteFoldersModal()
             onOmawriteRequested: root.openNoteInOmawrite("")
+            relayKey: function (event) { root.handleKey(event) }
             onNoteMenuRequested: function (path, x, y) {
               var rows = root.notesModel || []
               var note = null
@@ -4262,7 +4336,6 @@ Item {
                 pinnedSlot: Math.round(Number(note.pinnedSlot) || 0)
               }, pos.x, pos.y)
             }
-            onFilterRequested: function (id) { root.activeFilter = id }
             onEditorFocusedChanged: root.noteEditorFocused = editorFocused
           }
 
@@ -5565,7 +5638,8 @@ Item {
               spacing: Style.space(10)
 
               Column {
-                width: (parent.width - Style.space(10)) * 0.56
+                visible: !root.formEditingNote
+                width: root.formEditingNote ? 0 : (parent.width - Style.space(10)) * 0.56
                 spacing: 4
                 Text {
                   width: parent.width
@@ -5592,7 +5666,7 @@ Item {
               }
 
               Column {
-                width: (parent.width - Style.space(10)) * 0.44
+                width: root.formEditingNote ? parent.width : (parent.width - Style.space(10)) * 0.44
                 spacing: 4
                 Row {
                   width: parent.width

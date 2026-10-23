@@ -579,6 +579,14 @@ function parse(rawText) {
   }
 }
 
+function notePinRank(card) {
+  var order = Math.round(Number(card && card.pinOrder) || 0)
+  if (order > 0) return order
+  var slot = Math.round(Number(card && card.pinnedSlot) || 0)
+  if (slot >= 1 && slot <= 6) return 7 - slot
+  return 0
+}
+
 function sanitizeNotes(raw) {
   var base = (raw && typeof raw === "object" && !Array.isArray(raw)) ? raw : {}
   var roots = []
@@ -606,7 +614,8 @@ function sanitizeNotes(raw) {
       categoryId: String(card.categoryId || ""),
       colorRole: String(card.colorRole || ""),
       badgeText: String(card.badgeText || ""),
-      pinnedSlot: pinned
+      pinnedSlot: pinned,
+      pinOrder: notePinRank({ pinOrder: card.pinOrder, pinnedSlot: pinned })
     })
   }
   return {
@@ -667,6 +676,12 @@ function ensureNotesModel(data, inboxName) {
     next.notes = { writeRoot: "", roots: [], cards: [] }
   }
   return next
+}
+
+function applyScannedNotes(freshData, notes) {
+  var base = cloneData(freshData)
+  base.notes = sanitizeNotes(notes)
+  return base
 }
 
 function serialize(data) {
@@ -1561,6 +1576,7 @@ function notesModelRows(cards, files) {
     var card = list[c]
     if (!card || !card.path) continue
     var pinned = Math.round(Number(card.pinnedSlot) || 0)
+    var rank = notePinRank(card)
     var match = byPath[String(card.path)]
     if (!match) {
       out.push({
@@ -1570,6 +1586,7 @@ function notesModelRows(cards, files) {
         colorRole: String(card.colorRole || ""),
         categoryId: String(card.categoryId || ""),
         pinnedSlot: pinned,
+        pinOrder: rank,
         mtime: 0,
         tooLarge: false
       })
@@ -1582,11 +1599,71 @@ function notesModelRows(cards, files) {
       colorRole: String(card.colorRole || ""),
       categoryId: String(card.categoryId || ""),
       pinnedSlot: pinned,
+      pinOrder: rank,
       mtime: Number(match.mtime) || 0,
       tooLarge: match.tooLarge === true
     })
   }
+  out.sort(function (a, b) {
+    var ap = (Number(a.pinOrder) || 0) > 0 ? 0 : 1
+    var bp = (Number(b.pinOrder) || 0) > 0 ? 0 : 1
+    if (ap !== bp) return ap - bp
+    if (ap === 0) {
+      var byPin = (Number(b.pinOrder) || 0) - (Number(a.pinOrder) || 0)
+      if (byPin !== 0) return byPin
+    }
+    var byTime = (Number(b.mtime) || 0) - (Number(a.mtime) || 0)
+    if (byTime !== 0) return byTime
+    var at = String(a.title || "")
+    var bt = String(b.title || "")
+    if (at < bt) return -1
+    if (at > bt) return 1
+    var apath = String(a.path || "")
+    var bpath = String(b.path || "")
+    if (apath < bpath) return -1
+    if (apath > bpath) return 1
+    return 0
+  })
   return out
+}
+
+function toggleNotePin(notes, path) {
+  var base = notes && typeof notes === "object" ? notes : { writeRoot: "", roots: [], cards: [] }
+  var cards = Array.isArray(base.cards) ? base.cards : []
+  var target = String(path || "")
+  var maxRank = 0
+  var targetRank = 0
+  for (var i = 0; i < cards.length; i++) {
+    var rank = notePinRank(cards[i])
+    if (rank > maxRank) maxRank = rank
+    if (cards[i] && String(cards[i].path || "") === target) targetRank = rank
+  }
+  var nextRank = targetRank > 0 ? 0 : maxRank + 1
+  var nextCards = []
+  for (var j = 0; j < cards.length; j++) {
+    var card = cards[j]
+    if (!card || !card.path) continue
+    var slot = Math.round(Number(card.pinnedSlot) || 0)
+    if (slot < 0 || slot > 6) slot = 0
+    var copy = {
+      path: String(card.path),
+      categoryId: String(card.categoryId || ""),
+      colorRole: String(card.colorRole || ""),
+      badgeText: String(card.badgeText || ""),
+      pinnedSlot: slot,
+      pinOrder: notePinRank(card)
+    }
+    if (String(card.path) === target) {
+      copy.pinOrder = nextRank
+      copy.pinnedSlot = 0
+    }
+    nextCards.push(copy)
+  }
+  return {
+    writeRoot: String(base.writeRoot || ""),
+    roots: Array.isArray(base.roots) ? base.roots.slice() : [],
+    cards: nextCards
+  }
 }
 
 function noteReadSettlement(token, draft, path, res) {
@@ -1668,7 +1745,8 @@ function mergeNoteScan(notes, files, inboxCategoryId, truncated) {
       categoryId: prev && prev.categoryId ? String(prev.categoryId) : String(inboxCategoryId || ""),
       colorRole: prev && prev.colorRole ? String(prev.colorRole) : "",
       badgeText: prev && prev.badgeText ? String(prev.badgeText) : "",
-      pinnedSlot: slot
+      pinnedSlot: slot,
+      pinOrder: notePinRank(prev)
     })
   }
   if (truncated) {
@@ -1728,7 +1806,9 @@ if (typeof module !== "undefined") {
     noteFilename: noteFilename,
     notePathAllowed: notePathAllowed,
     mergeNoteScan: mergeNoteScan,
+    applyScannedNotes: applyScannedNotes,
     notesModelRows: notesModelRows,
+    toggleNotePin: toggleNotePin,
     searchNotes: searchNotes,
     noteReadSettlement: noteReadSettlement,
     noteWriteDraft: noteWriteDraft,
