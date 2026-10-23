@@ -833,7 +833,7 @@ Item {
     if (!path) return
     var draft = root.noteDraft || root.emptyNoteDraft()
     if (String(draft.path || "") === path) {
-      root.reconcileOpenNote(path)
+      root.readNoteIntoEditor(path)
       return
     }
     if (root.noteDraftNeedsSave()) {
@@ -1027,25 +1027,12 @@ Item {
         root.showStatus(root.tr("notesTrashFailed"))
         return
       }
-      var next = Storage.cloneData(root.data)
-      var cards = root.notesData(next).cards
-      var kept = []
-      for (var i = 0; i < cards.length; i++) {
-        if (cards[i] && String(cards[i].path) !== path) kept.push(cards[i])
-      }
-      next.notes.cards = kept
-      var files = root.noteFiles ? root.noteFiles.slice() : []
-      var keptFiles = []
-      for (var f = 0; f < files.length; f++) {
-        if (files[f] && String(files[f].path) !== path) keptFiles.push(files[f])
-      }
-      root.noteFiles = keptFiles
+      root.removeNoteCard(path)
       var draft = root.noteDraft || {}
       if (String(draft.path || "") === path) {
         root.noteDraftToken = root.noteDraftToken + 1
         root.clearNoteDraft()
       }
-      root.commitData(next)
       root.scanNotes()
     })
   }
@@ -1134,7 +1121,19 @@ Item {
             break
           }
         }
-        if (!openKept) {
+        if (!openKept && !Storage.notePathAllowed(openPath, root.noteWriteRoots())) {
+          root.noteDraftToken = root.noteDraftToken + 1
+          root.noteReadOnly = false
+          root.noteDraft = {
+            path: "",
+            text: String(openDraft.text || ""),
+            frontmatter: String(openDraft.frontmatter || ""),
+            mtime: 0,
+            dirty: true
+          }
+          root.showStatus(root.tr("notesFileGone"))
+          openPath = ""
+        } else if (!openKept) {
           var oldCards = (previousNotes && previousNotes.cards) ? previousNotes.cards : []
           for (var c = 0; c < oldCards.length; c++) {
             if (oldCards[c] && String(oldCards[c].path) === openPath) {
