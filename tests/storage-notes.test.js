@@ -192,4 +192,49 @@ assert.strictEqual(S.searchNotes(
   "body text that is not the title"
 ).length, 0)
 
+const stemHit = S.searchNotes(
+  { cards: [{ path: "/notes/trip.md", badgeText: "", categoryId: "cat-notes-inbox", colorRole: "", pinnedSlot: 0 }] },
+  [{ path: "/notes/trip.md", title: "Nadpis" }],
+  "trip"
+)
+assert.strictEqual(stemHit.length, 1)
+assert.strictEqual(stemHit[0].path, "/notes/trip.md")
+
+const badgeHit = S.searchNotes(
+  { cards: [{ path: "/notes/x.md", badgeText: "Pin", categoryId: "cat-notes-inbox", colorRole: "", pinnedSlot: 0 }] },
+  [{ path: "/notes/x.md", title: "Nadpis" }],
+  "pin"
+)
+assert.strictEqual(badgeHit.length, 1)
+assert.strictEqual(badgeHit[0].badgeText, "Pin")
+
+assert.deepStrictEqual(S.searchNotes(
+  { cards: [{ path: "/notes/a.md", badgeText: "A", categoryId: "cat-notes-inbox", colorRole: "", pinnedSlot: 0 }] },
+  [{ path: "/notes/a.md", title: "Nadpis" }],
+  "   "
+), [])
+
+const scanMissing = S.searchNotes(
+  {
+    cards: [
+      { path: "/notes/folder/later-note.md", categoryId: "cat-notes-inbox", colorRole: "blue", badgeText: "H", pinnedSlot: 1 }
+    ]
+  },
+  [{ path: "/notes/keep.md", title: "Keep", mtime: 9, size: 10, tooLarge: false }],
+  "later-note"
+)
+assert.strictEqual(scanMissing.length, 1)
+assert.strictEqual(scanMissing[0].title, "later-note")
+const scanMissingBadge = S.searchNotes(
+  {
+    cards: [
+      { path: "/notes/folder/later-note.md", categoryId: "cat-notes-inbox", colorRole: "blue", badgeText: "H", pinnedSlot: 1 }
+    ]
+  },
+  [{ path: "/notes/keep.md", title: "Keep", mtime: 9, size: 10, tooLarge: false }],
+  "h"
+)
+assert.strictEqual(scanMissingBadge.length, 1)
+assert.strictEqual(scanMissingBadge[0].badgeText, "H")
+
 console.log("storage-notes: all assertions ok")
