@@ -5,7 +5,7 @@ import os
 import stat
 import subprocess
 import sys
-import tempfile
+import secrets
 
 BODY_CAP = 1048576
 TITLE_CAP = 65536
@@ -62,6 +62,24 @@ def _allowed(path, roots):
         if _contains(_normalize_root(os.path.realpath(root_abs)), real_path):
             return True
     return False
+
+
+def _open_write_parent(path):
+    """Pin every directory, including root ancestry, without following symlinks."""
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    parent = os.path.dirname(os.path.abspath(path))
+    fd = os.open(os.sep, flags)
+    try:
+        for part in parent.split(os.sep):
+            if not part:
+                continue
+            child = os.open(part, flags, dir_fd=fd)
+            os.close(fd)
+            fd = child
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
 
 
 def _title(prefix, stem):
@@ -178,22 +196,39 @@ def _write(request):
     text = body
     if frontmatter:
         text = frontmatter + ("" if frontmatter.endswith("\n") else "\n") + body
-    parent = os.path.dirname(path)
+    parent_fd = None
     tmp = None
     try:
-        fd, tmp = tempfile.mkstemp(prefix=".meganote-", dir=parent)
+        parent_fd = _open_write_parent(path)
+        # All subsequent operations use this descriptor, never the mutable path.
+        for attempt in range(100):
+            candidate = ".meganote-" + secrets.token_hex(16)
+            try:
+                fd = os.open(candidate, os.O_WRONLY | os.O_CREAT | os.O_EXCL |
+                             os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=parent_fd)
+                tmp = candidate
+                break
+            except FileExistsError:
+                continue
+        else:
+            raise OSError("could not create temporary note")
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(tmp, path)
+            mtime = int(os.fstat(handle.fileno()).st_mtime)
+        os.replace(tmp, os.path.basename(path), src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
         tmp = None
     except OSError as exc:
         return {"ok": False, "error": str(exc)}
     finally:
-        if tmp and os.path.exists(tmp):
-            os.unlink(tmp)
-    return {"ok": True, "path": path, "mtime": int(os.stat(path).st_mtime)}
+        if parent_fd is not None:
+            try:
+                if tmp is not None:
+                    os.unlink(tmp, dir_fd=parent_fd)
+            finally:
+                os.close(parent_fd)
+    return {"ok": True, "path": path, "mtime": mtime}
 
 
 def _rename(request):

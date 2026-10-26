@@ -4,6 +4,7 @@ import shutil
 import signal
 import tempfile
 import unittest
+from unittest import mock
 
 spec = importlib.util.spec_from_file_location(
     "notes", os.path.join(os.path.dirname(__file__), "..", "scripts", "notes.py")
@@ -87,6 +88,53 @@ class NotesHelperTest(unittest.TestCase):
         })
         self.assertFalse(denied["ok"])
         self.assertFalse(os.path.exists(outside))
+
+    def test_write_directory_swap_cannot_redirect_save(self):
+        # Exercise both the configured root and a nested parent, before and
+        # after descriptor acquisition, plus cleanup when replacement fails.
+        for component in ("root", "nested", "ancestor"):
+            for stage in ("before_open", "before_replace", "failed_replace"):
+                with self.subTest(component=component, stage=stage), tempfile.TemporaryDirectory(dir=self.tmp) as base:
+                    root = os.path.join(base, "notes")
+                    parent = os.path.join(root, "sub")
+                    outside = os.path.join(base, "outside")
+                    os.makedirs(parent)
+                    os.mkdir(outside)
+                    victim = os.path.join(outside, "finance.md")
+                    with open(victim, "w") as handle:
+                        handle.write("keep")
+                    path = os.path.join(parent, "finance.md")
+                    target = root if component == "root" else parent
+                    if component == "ancestor":
+                        # Swap an ancestor above the configured root.
+                        target = root
+                        root = parent
+                    moved = target + "-moved"
+                    def swap():
+                        os.rename(target, moved)
+                        os.symlink(outside, target)
+                    original_open = notes._open_write_parent
+                    original_replace = os.replace
+                    def open_parent(value):
+                        if stage == "before_open":
+                            swap()
+                        return original_open(value)
+                    def replace(src, dst, **kwargs):
+                        swap()
+                        if stage == "failed_replace":
+                            raise OSError("injected failure")
+                        return original_replace(src, dst, **kwargs)
+                    with mock.patch.object(notes, "_open_write_parent", side_effect=open_parent), mock.patch.object(notes.os, "replace", side_effect=replace):
+                        result = notes.handle({"cmd": "write", "roots": [root], "path": path, "body": "saved"})
+                    self.assertEqual(result["ok"], stage == "before_replace")
+                    with open(victim) as handle:
+                        self.assertEqual(handle.read(), "keep")
+                    for folder, dirs, files in os.walk(base):
+                        self.assertFalse(any(name.startswith(".meganote-") for name in files))
+                    if result["ok"]:
+                        saved = os.path.join(moved, "sub", "finance.md") if component != "nested" else os.path.join(moved, "finance.md")
+                        with open(saved) as handle:
+                            self.assertEqual(handle.read(), "saved")
 
     def test_trash_failure_does_not_unlink(self):
         path = os.path.join(self.root, "a.md")
