@@ -1141,7 +1141,7 @@ Item {
     root.activeModal = ""
     root.runNotes({ cmd: "trash", path: path, roots: root.noteWriteRoots() }, function (res) {
       if (!res || !res.ok) {
-        root.showStatus(root.tr("notesTrashFailed"))
+        root.showStatus(root.tr(res && res.error === "unsafe trash path" ? "notesTrashUnsafe" : "notesTrashFailed"))
         return
       }
       root.removeNoteCard(path)
