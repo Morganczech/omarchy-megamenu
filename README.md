@@ -186,6 +186,7 @@ The **Note** space keeps your own notes as plain Markdown files.
 - **Find a note:** typing in any space also matches note titles, file names, and badges. Choosing a match opens it in the Note space.
 - **Omawrite opens the file:** **Open in Omawrite** in the editor, or the same action in the note's context menu, edits that file outside the menu. When you come back, a note without unsaved edits reloads; with unsaved text, your text is kept and a notice says the file changed.
 - **Delete moves the file to trash:** after a confirmation the file goes to the system trash, so it can be restored. Cancel leaves it alone.
+- **Shared folders:** reading, saving, and renaming notes use directory descriptors without following symbolic links. Renaming never overwrites an existing destination. Moving to the system trash is refused when another user can replace a directory in the path, or owns the note or an ancestor directory; use your file manager for those notes. This restriction preserves the original location in the system trash's restore metadata. Paths containing symbolic-link directories are not supported.
 - **`SUPER + N` is opt-in:** open the shortcut dialog from the top bar and turn on the note shortcut row. Nothing is written to `bindings.lua` until you do. It opens a new note even when Megamenu is already open.
 - **Top-bar `▾` menu:** the top row shows shortcut, add item, add category, close, and `▾`. **Page save**, language, and import are inside the `▾` menu, in every space.
 

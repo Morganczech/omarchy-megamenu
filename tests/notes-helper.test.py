@@ -113,7 +113,7 @@ class NotesHelperTest(unittest.TestCase):
                     def swap():
                         os.rename(target, moved)
                         os.symlink(outside, target)
-                    original_open = notes._open_write_parent
+                    original_open = notes._open_parent
                     original_replace = os.replace
                     def open_parent(value):
                         if stage == "before_open":
@@ -124,7 +124,7 @@ class NotesHelperTest(unittest.TestCase):
                         if stage == "failed_replace":
                             raise OSError("injected failure")
                         return original_replace(src, dst, **kwargs)
-                    with mock.patch.object(notes, "_open_write_parent", side_effect=open_parent), mock.patch.object(notes.os, "replace", side_effect=replace):
+                    with mock.patch.object(notes, "_open_parent", side_effect=open_parent), mock.patch.object(notes.os, "replace", side_effect=replace):
                         result = notes.handle({"cmd": "write", "roots": [root], "path": path, "body": "saved"})
                     self.assertEqual(result["ok"], stage == "before_replace")
                     with open(victim) as handle:
